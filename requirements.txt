@@ -1,0 +1,8 @@
+fastapi
+langserve
+langchain
+openai
+python-dotenv
+uvicorn
+elasticsearch
+sqlalchemy
