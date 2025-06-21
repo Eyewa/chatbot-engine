@@ -8,7 +8,8 @@ appropriate agent using an LLM-based intent classifier.
 """
 
 import logging
-from typing import Dict, Any
+import re
+from typing import Dict, Any, Optional
 
 from langchain.agents import create_openai_functions_agent, AgentExecutor
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
@@ -21,6 +22,15 @@ from langchain_core.runnables import (
 from langchain_openai import ChatOpenAI
 
 from tools.sql_tool import get_live_sql_tools, get_common_sql_tools
+
+
+def _extract_customer_id(query: str) -> Optional[str]:
+    """Return the customer ID from a query if explicitly mentioned."""
+    pattern = re.compile(r"(?i)customer(?:\s*id)?\s*[:#-]?\s*(\d+)")
+    match = pattern.search(query or "")
+    if match:
+        return match.group(1)
+    return None
 
 
 def _build_agent(tools, system_message: str) -> AgentExecutor:
