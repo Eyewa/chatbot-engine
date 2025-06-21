@@ -70,6 +70,30 @@ def _combine_responses(resp_live: Any, resp_common: Any) -> str:
     return "\n".join(parts)
 
 
+def _classify_query(query: str, llm_chain) -> str:
+    """Return destination database(s) for the given query.
+
+    The function first applies simple heuristics based on keywords and falls
+    back to the provided ``llm_chain`` when no direct match is found.
+    """
+    lowered = query.lower()
+    has_order = "order" in lowered
+    has_loyalty = any(word in lowered for word in ["loyalty", "loyalty card", "points", "card"])
+
+    if has_order and has_loyalty:
+        return "both"
+    if has_order:
+        return "live"
+    if has_loyalty:
+        return "common"
+
+    try:
+        return llm_chain.invoke({"input": query}).strip().lower()
+    except Exception as exc:  # pragma: no cover - log errors
+        logging.error("Classifier error: %s", exc)
+        return "both"
+
+
 def get_routed_agent() -> RunnableBranch:
     """Return a runnable router that dispatches to the correct database agent."""
     live_agent = _create_live_agent()
@@ -89,12 +113,8 @@ def get_routed_agent() -> RunnableBranch:
 
     def _classify(input_dict: Dict[str, Any]) -> str:
         query = input_dict.get("input", "")
-        try:
-            dest = classifier_chain.invoke({"input": query}).strip().lower()
-            logging.info("🏷️ Classifier prediction: %s", dest)
-        except Exception as exc:  # pragma: no cover - log errors
-            logging.error("Classifier error: %s", exc)
-            dest = "both"
+        dest = _classify_query(query, classifier_chain)
+        logging.info("🏷️ Classifier prediction: %s", dest)
         return dest
 
     def _handle_both(input_dict: Dict[str, Any]):
