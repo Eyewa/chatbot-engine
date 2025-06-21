@@ -24,7 +24,7 @@ def get_live_sql_tools():
     db_uri = os.getenv("SQL_DATABASE_URI_LIVE")
     db_live = SQLDatabase.from_uri(
         db_uri,
-        include_tables=["sales_order", "customer_entity", "order_meta_data"],
+        include_tables=["sales_order", "customer_entity", "order_meta_data","sales_order_payment"],
         sample_rows_in_table_info=5,
     )
     logging.info("✅ Live DB tables: %s", db_live.get_usable_table_names())
@@ -38,7 +38,6 @@ def get_common_sql_tools():
     db_common = SQLDatabase.from_uri(
         db_uri,
         include_tables=[
-            "sales_order_payment",
             "customer_loyalty_card",
             "customer_loyalty_ledger",
         ],
