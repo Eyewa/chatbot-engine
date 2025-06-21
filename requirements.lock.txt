@@ -29,6 +29,8 @@ langsmith==0.1.147
 marshmallow==3.26.1
 multidict==6.5.0
 mypy_extensions==1.1.0
+mysql-connector-python==9.3.0
+mysqlclient==2.2.7
 numpy==1.26.4
 openai==1.13.3
 orjson==3.10.18
@@ -36,6 +38,7 @@ packaging==23.2
 propcache==0.3.2
 pydantic==2.11.7
 pydantic_core==2.33.2
+PyMySQL==1.1.1
 python-dateutil==2.9.0.post0
 python-dotenv==1.0.1
 PyYAML==6.0.2
