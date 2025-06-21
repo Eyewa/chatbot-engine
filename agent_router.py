@@ -106,6 +106,12 @@ def get_routed_agent() -> RunnableBranch:
             logging.error("Common agent error: %s", exc)
         return _combine_responses(resp_live, resp_common)
 
+    def _handle_unknown(input_dict: Dict[str, Any]):
+        logging.warning(
+            "⚠️ Unknown intent '%s'. Falling back to both agents", input_dict.get("intent")
+        )
+        return _handle_both(input_dict)
+
     router = (
         RunnablePassthrough()
         .assign(intent=RunnableLambda(_classify))
@@ -113,7 +119,7 @@ def get_routed_agent() -> RunnableBranch:
             (lambda x: x["intent"] == "live", live_agent),
             (lambda x: x["intent"] == "common", common_agent),
             (lambda x: x["intent"] == "both", RunnableLambda(_handle_both)),
-            common_agent,
+            RunnableLambda(_handle_unknown),
         )
     )
     return router
