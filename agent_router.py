@@ -8,6 +8,7 @@ appropriate agent using an LLM-based intent classifier.
 """
 
 import logging
+import re
 from typing import Dict, Any
 
 from langchain.agents import create_openai_functions_agent, AgentExecutor
@@ -70,6 +71,27 @@ def _combine_responses(resp_live: Any, resp_common: Any) -> str:
     return "\n".join(parts)
 
 
+def _extract_customer_id(query: str) -> str | None:
+    """Return a customer ID extracted from the query if present."""
+    match = re.search(r"\b(\d{4,})\b", query)
+    return match.group(1) if match else None
+
+
+def _classify_query(query: str, classifier_chain) -> str:
+    """Return destination based on heuristic keywords and LLM classifier."""
+    lowered = query.lower()
+    if "loyalty" in lowered and ("order" in lowered or "purchase" in lowered):
+        logging.info("🏷️ Heuristic classification -> both")
+        return "both"
+    try:
+        dest = classifier_chain.invoke({"input": query}).strip().lower()
+        logging.info("🏷️ Classifier prediction: %s", dest)
+    except Exception as exc:  # pragma: no cover - log errors
+        logging.error("Classifier error: %s", exc)
+        dest = "both"
+    return dest
+
+
 def get_routed_agent() -> RunnableBranch:
     """Return a runnable router that dispatches to the correct database agent."""
     live_agent = _create_live_agent()
@@ -81,7 +103,8 @@ def get_routed_agent() -> RunnableBranch:
             "system",
             "Decide whether the user question relates to the live order database or "
             "the common loyalty database. Respond with one of: 'live', 'common', "
-            "or 'both'.",
+            "or 'both'. If the question mentions order details together with loyalty "
+            "information, respond with 'both'.",
         ),
         ("user", "{input}"),
     ])
@@ -89,26 +112,37 @@ def get_routed_agent() -> RunnableBranch:
 
     def _classify(input_dict: Dict[str, Any]) -> str:
         query = input_dict.get("input", "")
-        try:
-            dest = classifier_chain.invoke({"input": query}).strip().lower()
-            logging.info("🏷️ Classifier prediction: %s", dest)
-        except Exception as exc:  # pragma: no cover - log errors
-            logging.error("Classifier error: %s", exc)
-            dest = "both"
-        return dest
+        return _classify_query(query, classifier_chain)
 
     def _handle_both(input_dict: Dict[str, Any]):
         logging.info("🔀 Handling query across both databases")
+        query = input_dict.get("input", "")
+        customer_id = _extract_customer_id(query)
         resp_live = None
         resp_common = None
+
         try:
             resp_live = live_agent.invoke(input_dict)
         except Exception as exc:  # pragma: no cover
             logging.error("Live agent error: %s", exc)
+            if "Unknown column" in str(exc):
+                logging.info("Retrying on common DB due to column error")
+                try:
+                    resp_common = common_agent.invoke(input_dict)
+                except Exception as exc2:
+                    logging.error("Common agent error: %s", exc2)
+                return _combine_responses(resp_live, resp_common)
+
+        common_input = dict(input_dict)
+        if customer_id:
+            common_input["input"] = f"loyalty card for customer {customer_id}"
+
         try:
-            resp_common = common_agent.invoke(input_dict)
+            resp_common = common_agent.invoke(common_input)
         except Exception as exc:  # pragma: no cover
             logging.error("Common agent error: %s", exc)
+            if "Unknown column" in str(exc) and not customer_id:
+                logging.info("Retrying common query with customer ID from live result failed")
         return _combine_responses(resp_live, resp_common)
 
     def _handle_unknown(input_dict: Dict[str, Any]):

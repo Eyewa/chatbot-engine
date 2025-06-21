@@ -16,3 +16,15 @@ This project provides a lightweight FastAPI service powered by LangChain and Lan
    uvicorn main:app --reload
    ```
 4. Open `http://localhost:8000/docs` for interactive API docs.
+
+## Running Tests
+
+Unit tests are written with `pytest`. Install dev requirements and run:
+
+```bash
+pytest
+```
+
+## License
+
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
