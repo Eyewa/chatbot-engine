@@ -8,7 +8,9 @@ This project provides a lightweight FastAPI service powered by LangChain and Lan
    ```bash
    pip install -r requirements.txt
    ```
-2. Copy `.env.example` to `.env` and fill in your configuration values.
+2. Copy `.env.example` to `.env` and fill in your configuration values. The
+   template includes placeholders for variables like `OPENAI_API_KEY`,
+   `SQL_DATABASE_URI_LIVE` and `SQL_DATABASE_URI_COMMON`.
 3. Start the server:
    ```bash
    uvicorn main:app --reload
