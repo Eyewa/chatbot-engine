@@ -1,7 +1,7 @@
 fastapi>=0.100.0
 git+https://github.com/langchain-ai/langserve.git@main
 langchain>=0.1.0,<0.2.0
-langchain-community>=0.1.0,<0.2.0
+langchain-community>=0.0.30,<0.3.0
 openai>=0.27.0
 python-dotenv>=1.0.0
 uvicorn[standard]>=0.22.0
