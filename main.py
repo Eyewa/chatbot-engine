@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from langserve import add_routes
 from langserve.validation import ChatbotBatchRequest
+from pydantic import __version__ as pydantic_version
 
 from agent import build_agent
 
@@ -16,8 +17,11 @@ def create_app() -> FastAPI:
     logging.basicConfig(level=logging.INFO)
     logging.info(f"🟢 Starting Eyewear Chatbot API in '{env}' environment")
 
-    # Fix for Swagger/OpenAPI schema
-    ChatbotBatchRequest.model_rebuild()
+    major_version = int(pydantic_version.split(".")[0])
+    if major_version >= 2:
+        ChatbotBatchRequest.model_rebuild()
+    else:
+        ChatbotBatchRequest.update_forward_refs()
 
     app = FastAPI(
         title="Eyewear Chatbot API",
