@@ -1,7 +1,8 @@
 from sqlalchemy import create_engine, text
+import os
 
-# Replace with your actual DB URI
-db_uri = "mysql+pymysql://read_only:Aukdfduyje983idbj@db.eyewa.internal:3306/eyewa_live"
+# DB URI is now read from the TEST_DB_URI environment variable
+db_uri = os.getenv("TEST_DB_URI")
 
 try:
     engine = create_engine(db_uri)
