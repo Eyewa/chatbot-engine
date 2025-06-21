@@ -22,7 +22,11 @@ llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
 @lru_cache
 def get_live_sql_tools():
     db_uri = os.getenv("SQL_DATABASE_URI_LIVE")
-    db_live = SQLDatabase.from_uri(db_uri, include_tables=["sales_order","customer_entity"], sample_rows_in_table_info=5)
+    db_live = SQLDatabase.from_uri(
+        db_uri,
+        include_tables=["sales_order", "customer_entity", "order_meta_data"],
+        sample_rows_in_table_info=5,
+    )
     logging.info("✅ Live DB tables: %s", db_live.get_usable_table_names())
     toolkit = SQLDatabaseToolkit(db=db_live, llm=llm)
     tools = toolkit.get_tools()
@@ -31,7 +35,15 @@ def get_live_sql_tools():
 @lru_cache
 def get_common_sql_tools():
     db_uri = os.getenv("SQL_DATABASE_URI_COMMON")
-    db_common = SQLDatabase.from_uri(db_uri, include_tables=["customer_loyalty_card"], sample_rows_in_table_info=5)
+    db_common = SQLDatabase.from_uri(
+        db_uri,
+        include_tables=[
+            "sales_order_payment",
+            "customer_loyalty_card",
+            "customer_loyalty_ledger",
+        ],
+        sample_rows_in_table_info=5,
+    )
     logging.info("✅ common DB tables: %s", db_common.get_usable_table_names())
     toolkit = SQLDatabaseToolkit(db=db_common, llm=llm)
     tools = toolkit.get_tools()
