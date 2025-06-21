@@ -7,6 +7,13 @@ from langchain_community.agent_toolkits.sql.toolkit import SQLDatabaseToolkit
 from langchain_openai import ChatOpenAI
 from functools import lru_cache
 
+
+def _rename_tools(tools, suffix: str):
+    """Return tools with their names suffixed by the given database label."""
+    for tool in tools:
+        tool.name = f"{tool.name}_{suffix}"
+    return tools
+
 load_dotenv()
 
 llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
@@ -17,7 +24,8 @@ def get_live_sql_tools():
     db_live = SQLDatabase.from_uri(db_uri, include_tables=["sales_order"], sample_rows_in_table_info=5)
     print("✅ Live DB tables:", db_live.get_usable_table_names()) 
     toolkit = SQLDatabaseToolkit(db=db_live, llm=llm)
-    return toolkit.get_tools()
+    tools = toolkit.get_tools()
+    return _rename_tools(tools, "live")
 
 @lru_cache
 def get_common_sql_tools():
@@ -25,4 +33,5 @@ def get_common_sql_tools():
     db_common = SQLDatabase.from_uri(db_uri, include_tables=["customer_loyalty_card"], sample_rows_in_table_info=5)
     print("✅ common DB tables:", db_common.get_usable_table_names()) 
     toolkit = SQLDatabaseToolkit(db=db_common, llm=llm)
-    return toolkit.get_tools()
+    tools = toolkit.get_tools()
+    return _rename_tools(tools, "common")
