@@ -8,13 +8,18 @@ from tools.sql_tool import get_live_sql_tools, get_common_sql_tools
 def build_chatbot_agent():
 
     """
-    Constructs and returns a LangChain AgentExecutor for Winkly, the Eyewa assistant.
-    The agent uses tools from the eyewa_live and eyewa_common SQL databases and
-    responds based on a custom ChatPromptTemplate including chat history and scratchpad.
+    Construct and return the chatbot agent.
+
+    SQL tools are loaded from both the ``eyewa_live`` and ``eyewa_common``
+    databases. Each tool is automatically suffixed with the database label
+    (e.g. ``sql_db_query_live``) to avoid name collisions when registered with
+    the agent.
     """
     
     llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
 
+    # SQL tools already have unique names like ``sql_db_query_live`` to prevent
+    # collisions across databases.
     tools = get_live_sql_tools() + get_common_sql_tools()
 
     prompt = ChatPromptTemplate.from_messages([
