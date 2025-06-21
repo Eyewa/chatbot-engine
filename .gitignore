@@ -29,6 +29,7 @@ build/
 # dotenv environment files
 .env
 .env.*
+!.env.example
 
 # SQLAlchemy or Alembic cache/migrations (if any)
 *.db
