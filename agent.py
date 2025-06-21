@@ -1,15 +1,14 @@
 import os
 from dotenv import load_dotenv
 from langchain_community.chat_models import ChatOpenAI
-from langchain.agents import initialize_agent, AgentType
-from langchain.tools import BaseTool
+from langchain.agents import initialize_agent, AgentType, AgentExecutor
 
 # Import your @tool-decorated functions
 from tools.sql_tool import query_order_status
 from tools.es_tool import search_products_by_filters
 
 
-def build_agent() -> BaseTool:
+def build_agent() -> AgentExecutor:
     # Load env vars
     load_dotenv()
 
@@ -22,21 +21,15 @@ def build_agent() -> BaseTool:
     llm = ChatOpenAI(
         openai_api_key=openai_key,
         temperature=0,
-        verbose=(os.getenv("ENV", "local") != "production")
+        verbose=(os.getenv("ENV", "local") != "production"),
     )
 
     # Define available structured tools
-    tools = [
-        query_order_status,
-        search_products_by_filters
-    ]
+    tools = [query_order_status, search_products_by_filters]
 
     # Build the agent with function-calling support
     agent = initialize_agent(
-        tools=tools,
-        llm=llm,
-        agent=AgentType.OPENAI_FUNCTIONS,
-        verbose=True
+        tools=tools, llm=llm, agent=AgentType.OPENAI_FUNCTIONS, verbose=True
     )
 
     return agent
