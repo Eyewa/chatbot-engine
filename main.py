@@ -11,7 +11,6 @@ from dotenv import load_dotenv
 
 from agent import build_chatbot_agent
 
-# Define request/response schema
 class ChatbotRequest(BaseModel):
     input: str = Field(..., description="User's message to the chatbot")
     chat_history: List[str] = Field(default_factory=list, description="List of previous messages")
@@ -22,12 +21,11 @@ class ChatbotResponse(BaseModel):
 class ErrorResponse(BaseModel):
     detail: str
 
-# Create FastAPI app
 def create_app() -> FastAPI:
     load_dotenv()
     logging.basicConfig(level=logging.INFO)
     env = os.getenv("ENV", "local")
-    logging.info(f"\U0001F7E2 Starting chatbot API in '{env}' environment")
+    logging.info(f"🟢 Starting chatbot API in '{env}' environment")
 
     app = FastAPI(
         title="Eyewear Chatbot API",
@@ -56,9 +54,7 @@ def create_app() -> FastAPI:
     @app.post("/chat", response_model=ChatbotResponse, responses={500: {"model": ErrorResponse}})
     async def chat_endpoint(request: ChatbotRequest):
         try:
-            if agent is None:
-                raise RuntimeError("Agent not available. Check DB or initialization errors.")
-
+            logging.info("👀 Starting to load agent and handle input")
             greetings = ["hello", "hi", "hey", "yo", "hola"]
             if request.input.lower().strip() in greetings:
                 return ChatbotResponse(output="👋 Hi there! I'm Winkly — your assistant for everything eyewear. How can I help today?")
@@ -68,11 +64,14 @@ def create_app() -> FastAPI:
                 "chat_history": request.chat_history
             })
 
-            output = response.get("output", None)
-            if not isinstance(output, str):
-                raise ValueError("Response 'output' is not a valid string.")
+            logging.info("✅ Agent responded successfully")
 
-            return ChatbotResponse(output=output)
+            if hasattr(response, "content"):
+                return ChatbotResponse(output=response.content)
+            elif isinstance(response, str):
+                return ChatbotResponse(output=response)
+            else:
+                return ChatbotResponse(output=str(response))
 
         except Exception as e:
             logging.error(f"💥 Error during chat processing: {str(e)}", exc_info=True)

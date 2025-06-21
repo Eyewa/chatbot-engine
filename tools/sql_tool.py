@@ -5,19 +5,24 @@ from dotenv import load_dotenv
 from langchain_community.utilities import SQLDatabase
 from langchain_community.agent_toolkits.sql.toolkit import SQLDatabaseToolkit
 from langchain_openai import ChatOpenAI
+from functools import lru_cache
 
 load_dotenv()
 
 llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
 
+@lru_cache
 def get_live_sql_tools():
     db_uri = os.getenv("SQL_DATABASE_URI_LIVE")
-    db_live = SQLDatabase.from_uri(db_uri, include_tables=[], sample_rows_in_table_info=0)
+    db_live = SQLDatabase.from_uri(db_uri, include_tables=["sales_order"], sample_rows_in_table_info=5)
+    print("✅ Live DB tables:", db_live.get_usable_table_names()) 
     toolkit = SQLDatabaseToolkit(db=db_live, llm=llm)
     return toolkit.get_tools()
 
+@lru_cache
 def get_common_sql_tools():
     db_uri = os.getenv("SQL_DATABASE_URI_COMMON")
-    db_common = SQLDatabase.from_uri(db_uri, include_tables=[], sample_rows_in_table_info=0)
+    db_common = SQLDatabase.from_uri(db_uri, include_tables=["customer_loyalty_card"], sample_rows_in_table_info=5)
+    print("✅ common DB tables:", db_common.get_usable_table_names()) 
     toolkit = SQLDatabaseToolkit(db=db_common, llm=llm)
     return toolkit.get_tools()
