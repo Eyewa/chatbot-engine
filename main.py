@@ -1,36 +1,37 @@
+# main.py
+
 import os
 import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
 from dotenv import load_dotenv
-from langserve import add_routes
-from langserve.validation import ChatbotBatchRequest
-from pydantic import __version__ as pydantic_version
+from typing import List
 
-from agent import build_agent
+from agent import build_chatbot_agent
 
 
+# Define input/output manually to avoid schema issues with langchain
+class ChatbotRequest(BaseModel):
+    input: str = Field(..., description="User's message")
+    chat_history: List[object] = Field(default_factory=list, description="Chat history")
+
+class ChatbotResponse(BaseModel):
+    output: str = Field(..., description="Chatbot reply")
+
+# Build app
 def create_app() -> FastAPI:
-    # Load environment vars
     load_dotenv()
-    env = os.getenv("ENV", "local")
     logging.basicConfig(level=logging.INFO)
-    logging.info(f"🟢 Starting Eyewear Chatbot API in '{env}' environment")
-
-    major_version = int(pydantic_version.split(".")[0])
-    if major_version >= 2:
-        ChatbotBatchRequest.model_rebuild()
-    else:
-        ChatbotBatchRequest.update_forward_refs()
-
+    env = os.getenv("ENV", "local")
+    logging.info(f"🟢 Starting in '{env}' environment")
 
     app = FastAPI(
         title="Eyewear Chatbot API",
         version="1.0.0",
-        description="LangServe microservice for Eyewa POS chatbot"
+        description="LangChain chatbot API for Eyewa"
     )
 
-    # CORS (adjust origins in staging/production)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -39,9 +40,12 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # Build and mount the LangChain agent
-    agent = build_agent()
-    add_routes(app, agent, path="/chatbot")
+    agent_executor = build_chatbot_agent()
+
+    @app.post("/chatbot", response_model=ChatbotResponse)
+    async def chatbot_endpoint(payload: ChatbotRequest):
+        result = await agent_executor.ainvoke(payload.dict())
+        return {"output": result}
 
     return app
 
@@ -50,9 +54,4 @@ app = create_app()
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(
-        "main:app",
-        host="0.0.0.0",
-        port=int(os.getenv("PORT", 8000)),
-        reload=(os.getenv("ENV", "local") == "local")
-    )
+    uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", 8000)), reload=(os.getenv("ENV") == "local"))

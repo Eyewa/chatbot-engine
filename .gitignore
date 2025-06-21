@@ -1,3 +1,36 @@
+# Byte-compiled / optimized / DLL files
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyo
+*.so
+
+# Virtual environment
+venv/
+ENV/
+env/
+.venv/
+
+# VSCode settings
+.vscode/
+
+# macOS metadata
+.DS_Store
+
+# Python-related
+*.egg
+*.egg-info/
+dist/
+build/
+*.log
+
+# Jupyter Notebook checkpoints (if applicable)
+.ipynb_checkpoints/
+
+# dotenv environment files
 .env
+.env.*
+
+# SQLAlchemy or Alembic cache/migrations (if any)
+*.db
+*.sqlite3
+migratio
