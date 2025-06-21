@@ -41,7 +41,10 @@ def _create_live_agent() -> AgentExecutor:
     system_msg = (
         "You are Winkly, an assistant with access to the 'eyewa_live' database. "
         "Use the provided tools to query tables such as 'sales_order', "
-        "'customer_entity', and 'order_meta_data'."
+        "'customer_entity', and 'order_meta_data'. "
+        "Order information resides in `eyewa_live.sales_order` and should be "
+        "queried via `sql_db_query_live`. "
+        "Customer IDs correspond to the `entity_id` column in `customer_entity`."
     )
     return _build_agent(tools, system_msg)
 
@@ -51,7 +54,9 @@ def _create_common_agent() -> AgentExecutor:
     system_msg = (
         "You are Winkly, an assistant with access to the 'eyewa_common' database. "
         "Use the provided tools to query tables such as 'customer_loyalty_card', "
-        "'sales_order_payment', and 'customer_loyalty_ledger'."
+        "'sales_order_payment', and 'customer_loyalty_ledger'. "
+        "Loyalty card data is stored in `eyewa_common.customer_loyalty_card` "
+        "and is keyed by `customer_id`."
     )
     return _build_agent(tools, system_msg)
 
