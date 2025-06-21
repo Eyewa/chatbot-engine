@@ -1,57 +1,58 @@
-# main.py
-
 import os
 import logging
+from typing import List
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
-from typing import List
 
 from agent import build_chatbot_agent
 
-
-# Define input/output manually to avoid schema issues with langchain
+# Define request/response schema
 class ChatbotRequest(BaseModel):
-    input: str = Field(..., description="User's message")
-    chat_history: List[object] = Field(default_factory=list, description="Chat history")
+    input: str = Field(..., description="User's message to the chatbot")
+    chat_history: List[str] = Field(default_factory=list, description="List of previous messages")
 
 class ChatbotResponse(BaseModel):
-    output: str = Field(..., description="Chatbot reply")
+    output: str = Field(..., description="Chatbot's response")
 
-# Build app
+# Create FastAPI app
 def create_app() -> FastAPI:
     load_dotenv()
     logging.basicConfig(level=logging.INFO)
     env = os.getenv("ENV", "local")
-    logging.info(f"🟢 Starting in '{env}' environment")
+    logging.info(f"🟢 Starting chatbot API in '{env}' environment")
 
     app = FastAPI(
         title="Eyewear Chatbot API",
         version="1.0.0",
-        description="LangChain chatbot API for Eyewa"
+        description="LangChain-powered FastAPI chatbot service"
     )
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=["*"],  # Update for prod if needed
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
 
-    agent_executor = build_chatbot_agent()
+    agent = build_chatbot_agent()
 
-    @app.post("/chatbot", response_model=ChatbotResponse)
-    async def chatbot_endpoint(payload: ChatbotRequest):
-        result = await agent_executor.ainvoke(payload.dict())
-        return {"output": result}
+    @app.post("/chat", response_model=ChatbotResponse)
+    async def chat_endpoint(request: ChatbotRequest):
+        response = agent.invoke({
+            "input": request.input,
+            "chat_history": request.chat_history
+        })
+        # LangChain agent usually returns a dict with 'output' key
+        return ChatbotResponse(output=response.get("output", str(response)))
 
     return app
-
 
 app = create_app()
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", 8000)), reload=(os.getenv("ENV") == "local"))
+    port = int(os.getenv("PORT", 8000))
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=os.getenv("ENV") == "local")

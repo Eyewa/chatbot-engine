@@ -1,54 +1,47 @@
-# agent.py
-
 from typing import List
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain.agents import create_openai_functions_agent, AgentExecutor
 from langchain_openai import ChatOpenAI
+from langchain.agents import create_openai_functions_agent, AgentExecutor
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.messages import SystemMessage, HumanMessage
 from pydantic import BaseModel, Field
+import os
+from dotenv import load_dotenv
 
 # Import tools
 from tools.sql_tool import query_order_status
 from tools.es_tool import search_products_by_filters
-from dotenv import load_dotenv
+
+# Load environment and validate key
 load_dotenv()
+openai_key = os.getenv("OPENAI_API_KEY")
+if not openai_key or not openai_key.startswith("sk-"):
+    raise ValueError("❌ Missing or invalid OPENAI_API_KEY in environment")
 
-# Tools your agent can use
-TOOLS = [
-    query_order_status,
-    search_products_by_filters,
-]
-
-# System instruction for the assistant
+# System instructions
 SYSTEM_PROMPT = (
-    "You are a helpful assistant for Eyewa's POS chatbot.\n"
-    "Use 'query_order_status' to get order info and 'search_products_by_filters' to help with product discovery.\n"
-    "Call tools only when needed and reply clearly to the customer."
+    "You are a helpful assistant with tools to answer questions about orders and products. "
+    "Use `query_order_status` to check order details, and `search_products_by_filters` for product queries."
 )
 
-# Construct the full prompt template
+# Define the chat prompt
 prompt = ChatPromptTemplate.from_messages([
     SystemMessage(content=SYSTEM_PROMPT),
     MessagesPlaceholder(variable_name="chat_history", optional=True),
     HumanMessage(content="{input}"),
-    MessagesPlaceholder(variable_name="agent_scratchpad"),
+    MessagesPlaceholder(variable_name="agent_scratchpad")
 ])
 
-# ChatOpenAI setup (uses OPENAI_API_KEY from .env)
-llm = ChatOpenAI(model="gpt-3.5-turbo-0613", temperature=0)
+# Register tools
+TOOLS = [
+    query_order_status,
+    search_products_by_filters
+]
 
-# Bind prompt + tools to LLM agent
+# Setup the LLM and agent
+llm = ChatOpenAI(model="gpt-4", temperature=0, openai_api_key=openai_key)
 agent_chain = create_openai_functions_agent(llm=llm, tools=TOOLS, prompt=prompt)
 agent_executor = AgentExecutor(agent=agent_chain, tools=TOOLS, verbose=True)
 
-# Pydantic input/output types (for internal use or FastAPI validation)
-class Input(BaseModel):
-    input: str = Field(..., description="User's latest message")
-    chat_history: List[object] = Field(default_factory=list, description="Chat history")
-
-class Output(BaseModel):
-    output: str = Field(..., description="Bot's response")
-
-# Function to return the agent instance
-def build_chatbot_agent() -> AgentExecutor:
+# Build function for FastAPI to use
+def build_chatbot_agent():
     return agent_executor
