@@ -8,7 +8,7 @@ This project provides a lightweight FastAPI service powered by LangChain and Lan
    ```bash
    pip install -r requirements.txt
    ```
-2. Create a `.env` file with your configuration (see the provided template).
+2. Copy `.env.example` to `.env` and fill in your configuration values.
 3. Start the server:
    ```bash
    uvicorn main:app --reload
