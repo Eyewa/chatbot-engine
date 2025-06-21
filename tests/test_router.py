@@ -61,6 +61,11 @@ def test_extract_customer_id():
     assert agent_router._extract_customer_id(q) == "12345"
 
 
+def test_extract_customer_id_ignores_order():
+    q = "show order 98765"
+    assert agent_router._extract_customer_id(q) is None
+
+
 def test_handle_both_augments_query(monkeypatch):
     sent = []
 

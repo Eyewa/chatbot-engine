@@ -72,9 +72,22 @@ def _combine_responses(resp_live: Any, resp_common: Any) -> str:
 
 
 def _extract_customer_id(query: str) -> str | None:
-    """Return a customer ID extracted from the query if present."""
-    match = re.search(r"\b(\d{4,})\b", query)
-    return match.group(1) if match else None
+    """Return a customer ID extracted from the query if present.
+
+    The function looks for numbers that are explicitly referenced as a
+    customer identifier, e.g. ``customer 123`` or ``customer_id=123``.
+    This avoids mistaking order numbers for customer IDs.
+    """
+
+    patterns = [
+        r"customer[_\s]?id\s*[:=]?\s*(\d{4,})",
+        r"customer\s+(\d{4,})",
+    ]
+    for pat in patterns:
+        match = re.search(pat, query, flags=re.IGNORECASE)
+        if match:
+            return match.group(1)
+    return None
 
 
 def _classify_query(query: str, classifier_chain) -> str:
