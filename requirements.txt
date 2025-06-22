@@ -12,3 +12,4 @@ sse_starlette>=0.1.3
 httpx==0.27.0
 mysql-connector-python>=8.0
 mysqlclient>=2.2.0
+PyYAML>=6.0

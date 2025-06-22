@@ -1,0 +1,10 @@
+tables:
+  sales_order:
+    join: customer_entity via customer_id
+  sales_order_payment:
+    join: sales_order via order_id
+  customer_entity: {}
+  customer_loyalty_card:
+    join: customer_entity via customer_id
+  customer_loyalty_ledger:
+    join: customer_loyalty_card via card_id
