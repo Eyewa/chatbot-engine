@@ -237,9 +237,11 @@ def _handle_both(input_dict):
     while attempts < 2 and common_resp is None:
         try:
             if attempts == 1 and cid and not fallback_applied:
-                sub_inputs["common"][
-                    "input"
-                ] = f"SELECT card_number FROM customer_loyalty_card WHERE customer_id = {cid};"
+                sub_inputs["common"]["input"] = (
+                    "SELECT clc.card_number FROM customer_loyalty_card clc "
+                    "JOIN customer_loyalty_ledger cll ON clc.wallet_id = cll.wallet_id "
+                    f"WHERE clc.customer_id = {cid};"
+                )
                 fallback_applied = True
             common_resp = common_agent.invoke(sub_inputs["common"])
         except Exception as exc:
