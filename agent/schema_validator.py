@@ -1,6 +1,9 @@
 # schema_utils.py
 
-import yaml
+try:
+    import yaml  # type: ignore
+except Exception:  # PyYAML may be unavailable
+    yaml = None
 import json
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -11,8 +14,13 @@ def validate_schema_yaml(path: str) -> Dict[str, Any]:
     if not schema_path.exists():
         raise FileNotFoundError(f"❌ Schema file not found: {path}")
 
-    with schema_path.open("r", encoding="utf-8") as f:
-        data = yaml.safe_load(f)
+    if yaml is not None:
+        with schema_path.open("r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+    else:
+        json_path = schema_path.with_suffix(".json")
+        with json_path.open("r", encoding="utf-8") as jf:
+            data = json.load(jf)
 
     assert isinstance(data, dict), "❌ Top-level YAML structure must be a dictionary"
     assert "tables" in data, "❌ Missing 'tables' key in schema"

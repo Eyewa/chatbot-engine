@@ -2,7 +2,11 @@ import json
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-import yaml
+
+try:
+    import yaml  # type: ignore
+except Exception:
+    yaml = None
 
 class PromptBuilder:
     """Load prompt configuration from YAML files with hot-reload support."""
@@ -21,10 +25,15 @@ class PromptBuilder:
         try:
             mtime = path.stat().st_mtime
             if key not in cls._timestamps or cls._timestamps[key] < mtime:
-                with path.open("r", encoding="utf-8") as f:
-                    cls._cache[key] = yaml.safe_load(f) or {}
-                    cls._timestamps[key] = mtime
-                    logging.info(f"🔄 Reloaded config file: {path.name}")
+                if yaml is not None:
+                    with path.open("r", encoding="utf-8") as f:
+                        cls._cache[key] = yaml.safe_load(f) or {}
+                else:
+                    json_path = path.with_suffix(".json")
+                    with json_path.open("r", encoding="utf-8") as f:
+                        cls._cache[key] = json.load(f)
+                cls._timestamps[key] = mtime
+                logging.info(f"🔄 Reloaded config file: {path.name}")
             return cls._cache[key]
         except Exception as e:
             logging.warning(f"⚠️ Failed to load YAML: {path.name} — {e}")

@@ -32,7 +32,10 @@ tables:
         to_field: customer_id
 
   customer_loyalty_card:
-    description: Loyalty program cards linked to customers.
+    description: >
+      Loyalty program cards linked to customers. The table only contains
+      `card_id`, `card_number` and `customer_id` fields and has **no**
+      wallet information.
     fields: [card_id, card_number, customer_id]
     joins:
       - to_table: customer_entity
@@ -40,7 +43,10 @@ tables:
         to_field: entity_id
 
   customer_loyalty_ledger:
-    description: Loyalty point transactions for each wallet or card.
+    description: >
+      Loyalty point transactions for each wallet or card. It records
+      points in `point_delta` with an optional `reason` and timestamp but
+      does not store any order or payment amounts.
     fields: [entry_id, card_id, point_delta, reason, created_at, wallet_id]
     joins:
       - to_table: customer_wallet
