@@ -4,6 +4,7 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnableBranch, RunnableLambda, RunnablePassthrough
 from langchain_openai import ChatOpenAI
 import logging
+import re
 
 from tools.sql_tool import get_live_sql_tools, get_common_sql_tools
 
@@ -33,6 +34,34 @@ def _combine_responses(resp_live, resp_common):
     if resp_common:
         parts.append(str(getattr(resp_common, "content", resp_common)))
     return "\n".join(parts)
+
+
+def _extract_customer_id(query):
+    """Return a customer ID extracted from the query if present."""
+    patterns = [
+        r"customer[_\s]?id\s*[:=]?\s*(\d{4,})",
+        r"customer\s+(\d{4,})",
+    ]
+    for pat in patterns:
+        match = re.search(pat, query, flags=re.IGNORECASE)
+        if match:
+            return match.group(1)
+    return None
+
+
+def _classify_query(query, classifier_chain):
+    """Return destination based on heuristic keywords and LLM classifier."""
+    lowered = query.lower()
+    if "loyalty" in lowered and ("order" in lowered or "purchase" in lowered):
+        logging.info("🏷️ Heuristic classification -> both")
+        return "both"
+    try:
+        dest = classifier_chain.invoke({"input": query}).strip().lower()
+        logging.info("🏷️ Classifier prediction: %s", dest)
+    except Exception as exc:
+        logging.error("Classifier error: %s", exc)
+        dest = "both"
+    return dest
 
 def get_routed_agent():
     live_agent = _create_live_agent()
