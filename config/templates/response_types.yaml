@@ -1,0 +1,26 @@
+orders_summary:
+  fields:
+    - order_id
+    - amount
+    - status
+    - date
+    - details_url
+loyalty_summary:
+  fields:
+    - card_id
+    - tier
+    - points
+    - history_url
+customer_profile:
+  fields:
+    - customer_id
+    - name
+    - email
+    - phone
+mixed_summary:
+  fields:
+    - orders
+    - loyalty
+text_response:
+  fields:
+    - message
