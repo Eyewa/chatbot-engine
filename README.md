@@ -1,6 +1,8 @@
 # Chatbot Engine
 
-This project provides a lightweight FastAPI service powered by LangChain and LangServe. It exposes a `/chatbot/invoke` endpoint that proxies requests to a LangChain agent capable of answering customer queries.
+This project provides a lightweight FastAPI service powered by LangChain and LangServe. It exposes a `/chat` endpoint that proxies requests to a LangChain agent capable of answering customer queries.
+
+Each request may optionally include a `conversationId` which is used to retrieve previous questions and answers from the database. When supplied, the service appends the retrieved history to the chat request and also persists the new interaction for future use. This history can later be leveraged as feedback/training data or for retrieval‑augmented generation (RAG).
 
 ## Running Locally
 

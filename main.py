@@ -2,7 +2,7 @@ import os
 import re
 import ast
 import logging
-from typing import List
+from typing import List, Optional
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 from agent import build_chatbot_agent
 from langchain_openai import ChatOpenAI
+from chat_history_repository import ChatHistoryRepository
 
 # ------------------------
 # Request and Response Models
@@ -19,6 +20,7 @@ class ChatbotRequest(BaseModel):
     input: str = Field(..., description="User's message to the chatbot")
     chat_history: List[str] = Field(default_factory=list, description="Conversation history")
     summarize: bool = Field(default=False, description="If true, response will be shortened if too long")
+    conversation_id: Optional[str] = Field(default=None, alias="conversationId", description="ID used to fetch previous messages")
 
 class ChatbotResponse(BaseModel):
     output: str = Field(..., description="Chatbot's concise reply")
@@ -77,6 +79,7 @@ def create_app() -> FastAPI:
     )
 
     agent = build_chatbot_agent()
+    repo = ChatHistoryRepository()
 
     @app.exception_handler(Exception)
     async def handle_error(request: Request, exc: Exception):
@@ -92,8 +95,15 @@ def create_app() -> FastAPI:
             if request.input.strip().lower() in ["hi", "hello", "hey"]:
                 return ChatbotResponse(output="👋 Hi there! I'm Winkly. How can I help you today?")
 
+            history = request.chat_history
+            if request.conversation_id:
+                try:
+                    history = repo.fetch_history(request.conversation_id)
+                except Exception as e:
+                    logging.warning("⚠️ Could not fetch chat history: %s", e)
+
             logging.info("🧠 Processing input: %s", request.input)
-            result = agent.invoke({"input": request.input, "chat_history": request.chat_history})
+            result = agent.invoke({"input": request.input, "chat_history": history})
             logging.info("✅ Agent responded successfully")
 
             # Safely extract usable text
@@ -102,6 +112,12 @@ def create_app() -> FastAPI:
 
             # Optionally summarize
             final_output = shorten_if_needed(cleaned_output) if request.summarize else cleaned_output
+
+            if request.conversation_id:
+                try:
+                    repo.save_message(request.conversation_id, request.input, final_output)
+                except Exception as e:
+                    logging.warning("⚠️ Could not save chat history: %s", e)
 
             return ChatbotResponse(output=final_output)
 
