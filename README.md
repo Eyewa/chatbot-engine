@@ -4,6 +4,11 @@ This project provides a lightweight FastAPI service powered by LangChain and Lan
 
 Each request may optionally include a `conversationId` which is used to retrieve previous questions and answers from the database. When supplied, the service appends the retrieved history to the chat request and also persists the new interaction for future use. This history can later be leveraged as feedback/training data or for retrieval‑augmented generation (RAG).
 
+## Features
+
+- Schema-aware SQL validation prevents the agent from querying unknown columns.
+- Responses merge data from multiple sources and return partial results when only one succeeds.
+
 ## Running Locally
 
 1. Install dependencies:

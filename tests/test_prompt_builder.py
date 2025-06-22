@@ -1,5 +1,5 @@
-import json
 from agent.prompt_builder import PromptBuilder
+
 
 def test_custom_table_info_uses_custom_info():
     builder = PromptBuilder()
@@ -11,5 +11,7 @@ def test_custom_table_info_uses_custom_info():
 
 def test_system_prompt_includes_custom_info():
     builder = PromptBuilder()
-    prompt = builder.build_system_prompt(db="eyewa_live", allowed_tables=["customer_wallet"])
+    prompt = builder.build_system_prompt(
+        db="eyewa_live", allowed_tables=["customer_wallet"]
+    )
     assert "customer_id joins" in prompt
