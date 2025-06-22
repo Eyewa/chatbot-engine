@@ -1,5 +1,6 @@
 """Agent router for directing queries to the correct data source."""
 
+import json
 import logging
 import re
 from typing import Optional
@@ -35,7 +36,8 @@ except Exception:
     def ChatOpenAI(*args, **kwargs):
         raise ModuleNotFoundError("LangChain not installed")
 
-from tools.sql_tool import get_live_sql_tools, get_common_sql_tools, PromptBuilder
+from tools.sql_tool import get_live_sql_tools, get_common_sql_tools
+from agent.prompt_builder import PromptBuilder
 
 # -------------------------
 # CLASSIFIER & INTENT
@@ -85,12 +87,27 @@ def _create_common_agent():
     return _build_agent(tools, db_key="eyewa_common", allowed_tables=allowed, max_iterations=2)
 
 def _combine_responses(resp_live, resp_common):
-    parts = []
+    builder = PromptBuilder()
+    live_data = None
+    common_data = None
     if resp_live:
-        parts.append("🎯 **Live DB Result**:\n" + str(getattr(resp_live, "content", resp_live)))
+        live_raw = str(getattr(resp_live, "content", resp_live))
+        live_data = builder.translate_freeform(live_raw)
     if resp_common:
-        parts.append("🎯 **Common DB Result**:\n" + str(getattr(resp_common, "content", resp_common)))
-    return "\n\n".join(parts)
+        common_raw = str(getattr(resp_common, "content", resp_common))
+        common_data = builder.translate_freeform(common_raw)
+
+    if live_data and common_data:
+        combined = {
+            "type": "mixed_summary",
+            "data": {**live_data.get("data", {}), **common_data.get("data", {})},
+        }
+        return json.dumps(combined)
+    if live_data:
+        return json.dumps(live_data)
+    if common_data:
+        return json.dumps(common_data)
+    return json.dumps({"type": "text_response", "message": "No data"})
 
 # -------------------------
 # ADVANCED BOTH HANDLER
@@ -121,20 +138,20 @@ def _handle_both(input_dict):
     except Exception as exc:
         logging.error("Live agent error: %s", exc)
 
-    try:
-        common_resp = common_agent.invoke(sub_inputs["common"])
-    except Exception as exc:
-        logging.warning("Common agent failed: %s", exc)
-        cid = _extract_customer_id(input_text)
-        if cid:
-            fallback = {
-                "input": f"SELECT card_number FROM customer_loyalty_card WHERE customer_id = {cid};",
-                "chat_history": history,
-            }
-            try:
-                common_resp = common_agent.invoke(fallback)
-            except Exception as exc2:
-                logging.error("Fallback loyalty query failed: %s", exc2)
+    attempts = 0
+    cid = _extract_customer_id(input_text)
+    while attempts < 2 and common_resp is None:
+        try:
+            if attempts == 1 and cid:
+                sub_inputs["common"]["input"] = (
+                    f"SELECT card_number FROM customer_loyalty_card WHERE customer_id = {cid};"
+                )
+            common_resp = common_agent.invoke(sub_inputs["common"])
+        except Exception as exc:
+            attempts += 1
+            logging.warning("Common agent failed (attempt %s): %s", attempts, exc)
+            if attempts >= 2:
+                break
 
     if not live_resp and not common_resp:
         return "⚠️ There was an error fetching data from both sources."

@@ -60,6 +60,13 @@ class PromptBuilder:
             "🚫 Do NOT hallucinate tables or fields. Only query the tables and columns listed above."
         )
 
+        if db == "eyewa_common":
+            lines.append(
+                "You MUST only query these tables and fields. Do NOT assume or guess column names. "
+                "No cross-database joins are allowed. If loyalty info is not present, fallback to: "
+                "SELECT card_number FROM customer_loyalty_card WHERE customer_id = {X};"
+            )
+
         return "\n".join(lines)
 
     def build_custom_table_info(self, allowed_tables: Optional[List[str]] = None) -> Dict[str, str]:

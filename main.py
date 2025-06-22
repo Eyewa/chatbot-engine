@@ -2,6 +2,7 @@
 import os
 import re
 import ast
+import json
 import logging
 from typing import List, Optional
 
@@ -53,12 +54,20 @@ def shorten_if_needed(output: str, max_tokens: int = 300) -> str:
     return output
 
 def extract_final_output(raw_output: str) -> str:
+    """Return the clean JSON block from agent output."""
+    try:
+        parsed = json.loads(raw_output)
+        if isinstance(parsed, dict):
+            return json.dumps(parsed)
+    except Exception:
+        pass
+
     try:
         matches = re.findall(r"\{.*?\}", raw_output, re.DOTALL)
         for item in reversed(matches):
             parsed = ast.literal_eval(item)
-            if "output" in parsed and "Agent stopped" not in parsed["output"]:
-                return parsed["output"]
+            if isinstance(parsed, dict) and "type" in parsed:
+                return json.dumps(parsed)
     except Exception as e:
         logging.warning("⚠️ Could not parse structured output: %s", e)
     return raw_output.strip()
