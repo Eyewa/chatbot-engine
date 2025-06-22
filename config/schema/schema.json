@@ -1,0 +1,49 @@
+{
+  "schema_version": 1.0,
+  "tables": {
+    "sales_order": {
+      "description": "Orders placed by customers. `increment_id` is usually referred to as the order number externally.",
+      "fields": ["entity_id", "increment_id", "customer_id", "grand_total", "status", "created_at"],
+      "joins": [
+        {"to_table": "customer_entity", "from_field": "customer_id", "to_field": "entity_id"},
+        {"to_table": "sales_order_payment", "from_field": "entity_id", "to_field": "parent_id"}
+      ]
+    },
+    "sales_order_payment": {
+      "description": "Payment records for each order.",
+      "fields": ["parent_id", "amount_paid", "method"],
+      "joins": [
+        {"to_table": "sales_order", "from_field": "parent_id", "to_field": "entity_id"}
+      ]
+    },
+    "customer_entity": {
+      "description": "Customer profile information.",
+      "fields": ["entity_id", "first_name", "last_name", "email", "created_at"],
+      "joins": [
+        {"to_table": "customer_loyalty_card", "from_field": "entity_id", "to_field": "customer_id"}
+      ]
+    },
+    "customer_loyalty_card": {
+      "description": "Loyalty program cards linked to customers. The table only contains `card_id`, `card_number` and `customer_id` fields and has **no** wallet information.",
+      "fields": ["card_id", "card_number", "customer_id"],
+      "joins": [
+        {"to_table": "customer_entity", "from_field": "customer_id", "to_field": "entity_id"}
+      ]
+    },
+    "customer_loyalty_ledger": {
+      "description": "Loyalty point transactions for each wallet or card. It records points in `point_delta` with an optional `reason` and timestamp but does not store any order or payment amounts.",
+      "fields": ["entry_id", "card_id", "point_delta", "reason", "created_at", "wallet_id"],
+      "joins": [
+        {"to_table": "customer_wallet", "from_field": "wallet_id", "to_field": "entity_id"},
+        {"to_table": "customer_loyalty_card", "from_field": "card_id", "to_field": "card_id"}
+      ]
+    },
+    "customer_wallet": {
+      "description": "Wallets linked to customer accounts.",
+      "fields": ["entity_id", "customer_id"],
+      "joins": [
+        {"to_table": "customer_entity", "from_field": "customer_id", "to_field": "entity_id"}
+      ]
+    }
+  }
+}

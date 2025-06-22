@@ -5,7 +5,10 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import yaml
+try:
+    import yaml  # type: ignore
+except Exception:
+    yaml = None
 
 try:
     from dotenv import load_dotenv
@@ -51,8 +54,12 @@ class PromptBuilder:
             logging.warning(f"⚠️ YAML file not found: {path}")
             return {}
         try:
-            with path.open("r", encoding="utf-8") as f:
-                return yaml.safe_load(f) or {}
+            if yaml is not None:
+                with path.open("r", encoding="utf-8") as f:
+                    return yaml.safe_load(f) or {}
+            json_path = path.with_suffix(".json")
+            with json_path.open("r", encoding="utf-8") as f:
+                return json.load(f)
         except Exception as e:
             logging.error(f"❌ Failed to load YAML: {path} — {e}")
             return {}
