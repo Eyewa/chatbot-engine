@@ -3,35 +3,35 @@ import json
 import logging
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import yaml
 
-try:  # Optional: environment loader
+try:
     from dotenv import load_dotenv
-except Exception:
+except ImportError:
     def load_dotenv():
         return None
 
-try:  # Optional: LangChain and DB agent dependencies
+try:
     from langchain_community.utilities import SQLDatabase
     from langchain_community.agent_toolkits.sql.toolkit import SQLDatabaseToolkit
     from langchain_openai import ChatOpenAI
-except Exception:
+except ImportError:
     SQLDatabase = None
     SQLDatabaseToolkit = None
-    def ChatOpenAI(*args, **kwargs):
-        raise ModuleNotFoundError("langchain not installed")
 
-# Load environment variables
+    def ChatOpenAI(*args, **kwargs):
+        raise ModuleNotFoundError("LangChain dependencies not installed")
+
+# Load env variables
 load_dotenv()
 
-# LLM client
+# Initialize LLM
 try:
     llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
 except Exception:
     llm = None
-
 
 # ------------------------------------------
 # PromptBuilder class for schema/prompt prep
@@ -41,12 +41,12 @@ class PromptBuilder:
     """Load prompt configuration from YAML files and build system prompts."""
 
     def __init__(self, base_dir: str = "config"):
-        self.response_cfg = self._load_yaml(Path(base_dir) / "templates" / "response_types.yaml")
-        self.schema_cfg = self._load_yaml(Path(base_dir) / "schema" / "schema.yaml")
+        self.base_dir = Path(base_dir)
+        self.response_cfg = self._load_yaml(self.base_dir / "templates" / "response_types.yaml")
+        self.schema_cfg = self._load_yaml(self.base_dir / "schema" / "schema.yaml")
         self._validate_schema()
 
-    @staticmethod
-    def _load_yaml(path: Path) -> Dict[str, Any]:
+    def _load_yaml(self, path: Path) -> Dict[str, Any]:
         if not path.exists():
             logging.warning(f"⚠️ YAML file not found: {path}")
             return {}
@@ -63,20 +63,20 @@ class PromptBuilder:
             raise ValueError("Schema YAML must contain a 'tables' dictionary")
         for table, meta in tables.items():
             if not isinstance(meta, dict):
-                logging.warning(f"⚠️ Table '{table}' metadata is not a dictionary. Skipping.")
                 continue
-            if "fields" not in meta:
-                raise ValueError(f"Missing 'fields' key in table definition for '{table}'")
-            if not isinstance(meta["fields"], list):
-                raise ValueError(f"'fields' for table '{table}' must be a list")
+            if "fields" not in meta or not isinstance(meta["fields"], list):
+                raise ValueError(f"Invalid or missing 'fields' in table '{table}'")
+            if "joins" in meta:
+                for join in meta["joins"]:
+                    if not all(k in join for k in ("from_field", "to_table", "to_field")):
+                        raise ValueError(f"Incomplete join definition in table '{table}'")
 
-    def build_system_prompt(self, db: str = "", allowed_tables: List[str] = None) -> str:
+    def build_system_prompt(self, db: str = "", allowed_tables: Optional[List[str]] = None) -> str:
         types = ", ".join(self.response_cfg.keys())
         lines = [
             "You are Winkly — an intelligent, structured response assistant.",
             f"Always respond using JSON with a top-level 'type'. Valid types are: {types}.",
         ]
-
         if allowed_tables:
             lines.append(f"You are using the `{db}` database with access to: {', '.join(allowed_tables)}.")
         else:
@@ -86,9 +86,7 @@ class PromptBuilder:
 
         join_lines = []
         for table, meta in self.schema_cfg.get("tables", {}).items():
-            if not isinstance(meta, dict):
-                continue
-            if allowed_tables and table not in allowed_tables:
+            if not isinstance(meta, dict) or (allowed_tables and table not in allowed_tables):
                 continue
             for join in meta.get("joins", []):
                 if join.get("to_table") in allowed_tables:
@@ -100,20 +98,17 @@ class PromptBuilder:
         lines.append("Do NOT hallucinate tables or fields. Only use those explicitly listed.")
         return "\n".join(lines)
 
-    def build_custom_table_info(self) -> Dict[str, str]:
-        table_info = {}
+    def build_custom_table_info(self, allowed_tables: Optional[List[str]] = None) -> Dict[str, str]:
+        info = {}
         for table, meta in self.schema_cfg.get("tables", {}).items():
-            if not isinstance(meta, dict):
-                logging.warning(f"⚠️ Skipping malformed metadata for table: {table}")
+            if not isinstance(meta, dict) or (allowed_tables and table not in allowed_tables):
                 continue
             description = meta.get("description", f"{table} table.")
             fields = meta.get("fields", [])
             if not isinstance(fields, list):
-                logging.warning(f"⚠️ 'fields' must be a list in table: {table}. Skipping.")
                 continue
-            field_list = ", ".join(fields)
-            table_info[table] = f"{table}: {description}\nColumns: {field_list}"
-        return table_info
+            info[table] = f"{table}: {description}\nColumns: {', '.join(fields)}"
+        return info
 
     def translate_freeform(self, text: str) -> Dict[str, Any]:
         try:
@@ -125,12 +120,11 @@ class PromptBuilder:
         return {"type": "text_response", "message": text.strip()}
 
 
-# -------------------------
-# SQL tools factory methods
-# -------------------------
+# ------------------------------------------
+# SQL tools factory for live and common DBs
+# ------------------------------------------
 
 def _rename_tools(tools, suffix: str):
-    """Suffix tool names to prevent conflicts in multi-agent chains."""
     for tool in tools:
         tool.name = f"{tool.name}_{suffix}"
     return tools
@@ -138,7 +132,6 @@ def _rename_tools(tools, suffix: str):
 
 @lru_cache
 def get_live_sql_tools():
-    """Return LangChain tools for eyewa_live DB."""
     if SQLDatabase is None or SQLDatabaseToolkit is None or llm is None:
         return []
 
@@ -151,10 +144,7 @@ def get_live_sql_tools():
         "sales_order_payment",
     ]
 
-    custom_info = {
-        t: info for t, info in builder.build_custom_table_info().items()
-        if t in allowed_tables
-    }
+    custom_info = builder.build_custom_table_info(allowed_tables)
 
     uri = os.getenv("SQL_DATABASE_URI_LIVE")
     db = SQLDatabase.from_uri(
@@ -170,17 +160,12 @@ def get_live_sql_tools():
 
 @lru_cache
 def get_common_sql_tools():
-    """Return LangChain tools for eyewa_common DB."""
     if SQLDatabase is None or SQLDatabaseToolkit is None or llm is None:
         return []
 
     builder = PromptBuilder()
     allowed_tables = ["customer_loyalty_card", "customer_loyalty_ledger", "customer_wallet"]
-
-    custom_info = {
-        t: info for t, info in builder.build_custom_table_info().items()
-        if t in allowed_tables
-    }
+    custom_info = builder.build_custom_table_info(allowed_tables)
 
     uri = os.getenv("SQL_DATABASE_URI_COMMON")
     db = SQLDatabase.from_uri(

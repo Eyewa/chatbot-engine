@@ -33,9 +33,9 @@ except Exception:
             return None
 
     def ChatOpenAI(*args, **kwargs):
-        raise ModuleNotFoundError("langchain not installed")
+        raise ModuleNotFoundError("LangChain not installed")
 
-from tools.sql_tool import get_live_sql_tools, get_common_sql_tools
+from tools.sql_tool import get_live_sql_tools, get_common_sql_tools, PromptBuilder
 
 # -------------------------
 # CLASSIFIER & INTENT
@@ -59,15 +59,13 @@ def _classify_query(query: str, classifier_chain) -> str:
 # AGENT CONSTRUCTION
 # -------------------------
 
-def _build_agent(tools, system_message):
-    from agent.prompt_builder import PromptBuilder
-
+def _build_agent(tools, db_key: str, allowed_tables: list[str]):
     builder = PromptBuilder()
-    full_prompt = builder.build_system_prompt() + "\n" + system_message
+    system_prompt = builder.build_system_prompt(db=db_key, allowed_tables=allowed_tables)
 
     llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
     prompt = ChatPromptTemplate.from_messages([
-        ("system", full_prompt),
+        ("system", system_prompt),
         MessagesPlaceholder(variable_name="chat_history"),
         ("user", "{input}"),
         MessagesPlaceholder(variable_name="agent_scratchpad"),
@@ -77,11 +75,13 @@ def _build_agent(tools, system_message):
 
 def _create_live_agent():
     tools = get_live_sql_tools()
-    return _build_agent(tools, "You are Winkly with access to eyewa_live DB including sales_order, customer_entity, order_meta_data, sales_order_payment.")
+    allowed = ["sales_order", "customer_entity", "order_meta_data", "sales_order_address", "sales_order_payment"]
+    return _build_agent(tools, db_key="eyewa_live", allowed_tables=allowed)
 
 def _create_common_agent():
     tools = get_common_sql_tools()
-    return _build_agent(tools, "You are Winkly with access to eyewa_common DB including customer_loyalty_card, customer_loyalty_ledger.")
+    allowed = ["customer_loyalty_card", "customer_loyalty_ledger", "customer_wallet"]
+    return _build_agent(tools, db_key="eyewa_common", allowed_tables=allowed)
 
 def _combine_responses(resp_live, resp_common):
     parts = []
@@ -100,7 +100,7 @@ def _handle_both(input_dict):
     input_text = input_dict.get("input", "")
     history = input_dict.get("chat_history", [])
 
-    # Split query contextually by hinting the agents separately
+    # Split into scoped prompts
     sub_inputs = {
         "live": {
             "input": input_text + " (only fetch from orders, payments, customers)",
@@ -149,10 +149,9 @@ def _create_classifier_chain():
     return prompt | llm | StrOutputParser()
 
 def get_routed_agent():
-    global live_agent, common_agent  # So we can reuse them in `_handle_both`
+    global live_agent, common_agent
     live_agent = _create_live_agent()
     common_agent = _create_common_agent()
-
     classifier_chain = _create_classifier_chain()
 
     def _classify(input_dict):

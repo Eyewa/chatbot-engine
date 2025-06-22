@@ -1,18 +1,22 @@
+# main.py
 import os
 import re
 import ast
 import logging
 from typing import List, Optional
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
+
 from agent.agent import build_chatbot_agent
 from agent.agent_router import _create_classifier_chain, _classify_query
-from langchain_openai import ChatOpenAI
 from agent.chat_history_repository import ChatHistoryRepository
 from agent.reload_config import router as reload_router
+
+from langchain_openai import ChatOpenAI
 
 # ------------------------
 # Request and Response Models
@@ -78,8 +82,10 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    # Optional router to reload schema/config
     app.include_router(reload_router)
 
+    # Init core components
     agent = build_chatbot_agent()
     repo = ChatHistoryRepository()
     classifier_chain = _create_classifier_chain()
@@ -92,11 +98,11 @@ def create_app() -> FastAPI:
             content={"detail": "Oops! Something went wrong. Please try again later."}
         )
 
-    @app.get("/ping")
+    @app.get("/ping", tags=["Health"])
     async def ping():
         return {"status": "ok"}
 
-    @app.post("/chat", response_model=ChatbotResponse, responses={500: {"model": ErrorResponse}})
+    @app.post("/chat", response_model=ChatbotResponse, tags=["Chatbot"], responses={500: {"model": ErrorResponse}})
     async def chat_endpoint(request: ChatbotRequest):
         try:
             if request.input.strip().lower() in ["hi", "hello", "hey"]:

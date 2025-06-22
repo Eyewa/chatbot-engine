@@ -1,7 +1,7 @@
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 import yaml
 
 class PromptBuilder:
@@ -30,7 +30,7 @@ class PromptBuilder:
             logging.warning(f"⚠️ Failed to load YAML: {path.name} — {e}")
             return {}
 
-    def build_system_prompt(self, db: str = "", allowed_tables: List[str] = None) -> str:
+    def build_system_prompt(self, db: str = "", allowed_tables: Optional[List[str]] = None) -> str:
         types = ", ".join(self.response_cfg.keys())
         lines = [
             "You are Winkly — an intelligent, structured response assistant.",
@@ -55,24 +55,22 @@ class PromptBuilder:
             lines.append("Use these known joins when needed:")
             lines.extend(join_lines)
 
-        # Explicit anti-hallucination hint
-        lines.append("Do NOT hallucinate tables or fields. Only use those explicitly listed.")
+        # Anti-hallucination
+        lines.append("🚫 Do NOT hallucinate tables or fields. Only use those explicitly listed.")
 
         return "\n".join(lines)
 
-    def build_custom_table_info(self) -> Dict[str, str]:
-        table_info = {}
+    def build_custom_table_info(self, allowed_tables: Optional[List[str]] = None) -> Dict[str, str]:
+        """Return LangChain-compatible table info for allowed tables only."""
+        info = {}
         for table, meta in self.schema_cfg.get("tables", {}).items():
+            if allowed_tables and table not in allowed_tables:
+                continue
             description = meta.get("description", f"{table} table.")
             fields = meta.get("fields", [])
             field_list = ", ".join(fields)
-            table_info[table] = f"{table}: {description}\nColumns: {field_list}"
-        return table_info
-
-    def build_custom_table_info_filtered(self, allowed_tables: List[str]) -> Dict[str, str]:
-        """Return custom_table_info for only a subset of allowed tables."""
-        full_info = self.build_custom_table_info()
-        return {table: info for table, info in full_info.items() if table in allowed_tables}
+            info[table] = f"{table}: {description}\nColumns: {field_list}"
+        return info
 
     def translate_freeform(self, text: str) -> Dict[str, Any]:
         try:
