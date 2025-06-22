@@ -20,6 +20,7 @@ try:  # Optional: LangChain and DB agent dependencies
 except Exception:
     SQLDatabase = None
     SQLDatabaseToolkit = None
+
     def ChatOpenAI(*args, **kwargs):
         raise ModuleNotFoundError("langchain not installed")
 
@@ -31,6 +32,7 @@ try:
     llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
 except Exception:
     llm = None
+
 
 # ------------------------------------------
 # PromptBuilder class for schema/prompt prep
@@ -61,19 +63,23 @@ class PromptBuilder:
         if allowed_tables:
             lines.append(f"You are using the `{db}` database with access to: {', '.join(allowed_tables)}.")
 
+        # Prevent cross-database join hallucination
+        lines.append("⚠️ Tables with `_live` and `_common` suffixes belong to separate databases. Never join across them.")
+
         # Join hints (for relational understanding)
         join_lines = []
         for table, meta in self.schema_cfg.get("tables", {}).items():
             if allowed_tables and table not in allowed_tables:
                 continue
             for join in meta.get("joins", []):
-                from_field = join["from_field"]
-                to_table = join["to_table"]
-                to_field = join["to_field"]
-                join_lines.append(f"{table}.{from_field} → {to_table}.{to_field}")
+                if join.get("to_table") in allowed_tables:
+                    join_lines.append(f"{table}.{join['from_field']} → {join['to_table']}.{join['to_field']}")
         if join_lines:
             lines.append("Use these known joins when needed:")
             lines.extend(join_lines)
+
+        # Anti-hallucination
+        lines.append("Do NOT hallucinate tables or fields. Only use those explicitly listed.")
 
         return "\n".join(lines)
 
@@ -97,6 +103,7 @@ class PromptBuilder:
             pass
         return {"type": "text_response", "message": text.strip()}
 
+
 # -------------------------
 # SQL tools factory methods
 # -------------------------
@@ -107,6 +114,7 @@ def _rename_tools(tools, suffix: str):
         tool.name = f"{tool.name}_{suffix}"
     return tools
 
+
 @lru_cache
 def get_live_sql_tools():
     """Return LangChain tools for eyewa_live DB."""
@@ -114,7 +122,6 @@ def get_live_sql_tools():
         return []
 
     builder = PromptBuilder()
-    custom_info = builder.build_custom_table_info()
     allowed_tables = [
         "sales_order",
         "customer_entity",
@@ -123,16 +130,22 @@ def get_live_sql_tools():
         "sales_order_payment",
     ]
 
+    custom_info = {
+        t: info for t, info in builder.build_custom_table_info().items()
+        if t in allowed_tables
+    }
+
     uri = os.getenv("SQL_DATABASE_URI_LIVE")
     db = SQLDatabase.from_uri(
         uri,
-        include_tables=[t for t in allowed_tables if t in custom_info],
+        include_tables=list(custom_info.keys()),
         sample_rows_in_table_info=0,
         custom_table_info=custom_info,
     )
     logging.info("✅ Loaded live DB tables: %s", db.get_usable_table_names())
     tools = SQLDatabaseToolkit(db=db, llm=llm).get_tools()
     return _rename_tools(tools, "live")
+
 
 @lru_cache
 def get_common_sql_tools():
@@ -141,13 +154,17 @@ def get_common_sql_tools():
         return []
 
     builder = PromptBuilder()
-    custom_info = builder.build_custom_table_info()
     allowed_tables = ["customer_loyalty_card", "customer_loyalty_ledger", "customer_wallet"]
+
+    custom_info = {
+        t: info for t, info in builder.build_custom_table_info().items()
+        if t in allowed_tables
+    }
 
     uri = os.getenv("SQL_DATABASE_URI_COMMON")
     db = SQLDatabase.from_uri(
         uri,
-        include_tables=[t for t in allowed_tables if t in custom_info],
+        include_tables=list(custom_info.keys()),
         sample_rows_in_table_info=0,
         custom_table_info=custom_info,
     )

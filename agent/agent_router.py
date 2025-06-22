@@ -1,6 +1,10 @@
 """Agent router for directing queries to the correct data source."""
 
-try:  # pragma: no cover - optional dependency
+import logging
+import re
+from typing import Optional
+
+try:
     from langchain.agents import create_openai_functions_agent, AgentExecutor
     from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
     from langchain_core.output_parsers import StrOutputParser
@@ -11,52 +15,49 @@ try:  # pragma: no cover - optional dependency
     )
     from langchain_openai import ChatOpenAI
     LANGCHAIN_AVAILABLE = True
-except Exception:  # pragma: no cover - fallback for test envs without langchain
+except Exception:
     LANGCHAIN_AVAILABLE = False
 
-    class RunnableLambda:  # minimal stub used in tests
+    class RunnableLambda:
         def __init__(self, func):
             self.func = func
-
         def invoke(self, input_dict):
             return self.func(input_dict)
 
     class AgentExecutor:
         def __init__(self, agent=None, tools=None, verbose=False):
             self.agent = agent
-
         def invoke(self, input_dict):
             if callable(self.agent):
                 return self.agent(input_dict)
             return None
 
-    def ChatOpenAI(*args, **kwargs):  # type: ignore
+    def ChatOpenAI(*args, **kwargs):
         raise ModuleNotFoundError("langchain not installed")
 
-    # Other classes are not required for the unit tests and are omitted
-import logging
-import re
-
 from tools.sql_tool import get_live_sql_tools, get_common_sql_tools
-from typing import Optional
 
+# -------------------------
+# CLASSIFIER & INTENT
+# -------------------------
 
 def _extract_customer_id(query: str) -> Optional[str]:
-    """Return customer ID if present in the query."""
     match = re.search(r"customer\s+(\d+)", query, re.IGNORECASE)
     return match.group(1) if match else None
 
-
 def _classify_query(query: str, classifier_chain) -> str:
-    """Classify a query using simple heuristics then an LLM chain."""
     q = query.lower()
     if "order" in q and "loyalty" in q:
         return "both"
     try:
         return classifier_chain.invoke({"input": query}).strip().lower()
-    except Exception as exc:  # pragma: no cover - LLM errors
+    except Exception as exc:
         logging.error("Classifier error: %s", exc)
         return "both"
+
+# -------------------------
+# AGENT CONSTRUCTION
+# -------------------------
 
 def _build_agent(tools, system_message):
     from agent.prompt_builder import PromptBuilder
@@ -85,18 +86,49 @@ def _create_common_agent():
 def _combine_responses(resp_live, resp_common):
     parts = []
     if resp_live:
-        parts.append(str(getattr(resp_live, "content", resp_live)))
+        parts.append("🎯 **Live DB Result**:\n" + str(getattr(resp_live, "content", resp_live)))
     if resp_common:
-        parts.append(str(getattr(resp_common, "content", resp_common)))
-    return "\n".join(parts)
+        parts.append("🎯 **Common DB Result**:\n" + str(getattr(resp_common, "content", resp_common)))
+    return "\n\n".join(parts)
 
+# -------------------------
+# ADVANCED BOTH HANDLER
+# -------------------------
+
+def _handle_both(input_dict):
+    logging.info("🔀 Handling BOTH agent path")
+    input_text = input_dict.get("input", "")
+    history = input_dict.get("chat_history", [])
+
+    # Split query contextually by hinting the agents separately
+    sub_inputs = {
+        "live": {
+            "input": input_text + " (only fetch from orders, payments, customers)",
+            "chat_history": history
+        },
+        "common": {
+            "input": input_text + " (only fetch from loyalty, wallet, ledger)",
+            "chat_history": history
+        }
+    }
+
+    try:
+        live_resp = live_agent.invoke(sub_inputs["live"])
+        common_resp = common_agent.invoke(sub_inputs["common"])
+        return _combine_responses(live_resp, common_resp)
+    except Exception as e:
+        logging.error("_handle_both error: %s", e)
+        return "⚠️ There was an error fetching data from both sources."
+
+# -------------------------
+# ROUTED AGENT
+# -------------------------
 
 def _create_classifier_chain():
     if not LANGCHAIN_AVAILABLE:
         class Dummy:
             def invoke(self, payload):
                 return "both"
-
         return Dummy()
 
     llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
@@ -117,6 +149,7 @@ def _create_classifier_chain():
     return prompt | llm | StrOutputParser()
 
 def get_routed_agent():
+    global live_agent, common_agent  # So we can reuse them in `_handle_both`
     live_agent = _create_live_agent()
     common_agent = _create_common_agent()
 
@@ -128,16 +161,6 @@ def get_routed_agent():
         logging.info("🏷️ Classifier prediction: %s", intent)
         return intent
 
-    def _handle_both(input_dict):
-        logging.info("🔀 Handling BOTH agent path")
-        try:
-            live_resp = live_agent.invoke(input_dict)
-            common_resp = common_agent.invoke(input_dict)
-            return _combine_responses(live_resp, common_resp)
-        except Exception as e:
-            logging.error("_handle_both error: %s", e)
-            return "⚠️ There was an error fetching data from both sources."
-
     if not LANGCHAIN_AVAILABLE:
         class SimpleRouter:
             def invoke(self, input_dict):
@@ -147,7 +170,6 @@ def get_routed_agent():
                 if intent == "common":
                     return common_agent.invoke(input_dict)
                 return _handle_both(input_dict)
-
         return SimpleRouter()
 
     router = (

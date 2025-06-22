@@ -38,15 +38,26 @@ class PromptBuilder:
         ]
         if allowed_tables:
             lines.append(f"You are using the `{db}` database with access to: {', '.join(allowed_tables)}.")
+        else:
+            allowed_tables = []
+
+        # Prevent cross-database join hallucination
+        lines.append("⚠️ Tables with `_live` and `_common` suffixes belong to separate databases. Never join across them.")
+
         join_lines = []
         for table, meta in self.schema_cfg.get("tables", {}).items():
             if allowed_tables and table not in allowed_tables:
                 continue
             for join in meta.get("joins", []):
-                join_lines.append(f"{table}.{join['from_field']} → {join['to_table']}.{join['to_field']}")
+                if join.get("to_table") in allowed_tables:
+                    join_lines.append(f"{table}.{join['from_field']} → {join['to_table']}.{join['to_field']}")
         if join_lines:
             lines.append("Use these known joins when needed:")
             lines.extend(join_lines)
+
+        # Explicit anti-hallucination hint
+        lines.append("Do NOT hallucinate tables or fields. Only use those explicitly listed.")
+
         return "\n".join(lines)
 
     def build_custom_table_info(self) -> Dict[str, str]:
@@ -71,3 +82,13 @@ class PromptBuilder:
         except Exception:
             pass
         return {"type": "text_response", "message": text.strip()}
+
+    def assert_valid_schema(self):
+        assert isinstance(self.schema_cfg, dict), "Schema must be a dictionary"
+        for table, meta in self.schema_cfg.get("tables", {}).items():
+            assert "fields" in meta, f"Missing fields for table {table}"
+            assert isinstance(meta.get("fields"), list), f"Fields for table {table} must be a list"
+            if "joins" in meta:
+                assert isinstance(meta["joins"], list), f"Joins for table {table} must be a list"
+                for join in meta["joins"]:
+                    assert "from_field" in join and "to_table" in join and "to_field" in join, f"Invalid join format in {table}"
