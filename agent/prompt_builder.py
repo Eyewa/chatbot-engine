@@ -1,22 +1,34 @@
-# agent/prompt_builder.py
 import json
+import logging
 from pathlib import Path
 from typing import Any, Dict, List
 import yaml
 
 class PromptBuilder:
-    """Load prompt configuration from YAML files and build system prompts."""
+    """Load prompt configuration from YAML files with hot-reload support."""
+
+    _cache: Dict[str, Dict[str, Any]] = {}
+    _timestamps: Dict[str, float] = {}
 
     def __init__(self, base_dir: str = "config"):
-        self.response_cfg = self._load_yaml(Path(base_dir) / "templates" / "response_types.yaml")
-        self.schema_cfg = self._load_yaml(Path(base_dir) / "schema" / "schema.yaml")
+        self.base_dir = Path(base_dir)
+        self.response_cfg = self._load_yaml(self.base_dir / "templates" / "response_types.yaml")
+        self.schema_cfg = self._load_yaml(self.base_dir / "schema" / "schema.yaml")
 
-    @staticmethod
-    def _load_yaml(path: Path) -> Dict[str, Any]:
-        if not path.exists():
+    @classmethod
+    def _load_yaml(cls, path: Path) -> Dict[str, Any]:
+        key = str(path.resolve())
+        try:
+            mtime = path.stat().st_mtime
+            if key not in cls._timestamps or cls._timestamps[key] < mtime:
+                with path.open("r", encoding="utf-8") as f:
+                    cls._cache[key] = yaml.safe_load(f) or {}
+                    cls._timestamps[key] = mtime
+                    logging.info(f"🔄 Reloaded config file: {path.name}")
+            return cls._cache[key]
+        except Exception as e:
+            logging.warning(f"⚠️ Failed to load YAML: {path.name} — {e}")
             return {}
-        with path.open("r", encoding="utf-8") as f:
-            return yaml.safe_load(f) or {}
 
     def build_system_prompt(self, db: str = "", allowed_tables: List[str] = None) -> str:
         types = ", ".join(self.response_cfg.keys())
@@ -45,6 +57,11 @@ class PromptBuilder:
             field_list = ", ".join(fields)
             table_info[table] = f"{table}: {description}\nColumns: {field_list}"
         return table_info
+
+    def build_custom_table_info_filtered(self, allowed_tables: List[str]) -> Dict[str, str]:
+        """Return custom_table_info for only a subset of allowed tables."""
+        full_info = self.build_custom_table_info()
+        return {table: info for table, info in full_info.items() if table in allowed_tables}
 
     def translate_freeform(self, text: str) -> Dict[str, Any]:
         try:
