@@ -27,3 +27,6 @@ def test_schema_integrity(schema):
             assert "from_field" in join, f"Missing from_field in join for {table}"
             assert "to_table" in join, f"Missing to_table in join for {table}"
             assert "to_field" in join, f"Missing to_field in join for {table}"
+
+        if "customInfo" in meta:
+            assert isinstance(meta["customInfo"], str)

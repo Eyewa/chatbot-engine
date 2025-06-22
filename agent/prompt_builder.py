@@ -56,11 +56,14 @@ class PromptBuilder:
             )
             table_info = []
             for table in allowed_tables:
-                fields = (
-                    self.schema_cfg.get("tables", {}).get(table, {}).get("fields", [])
-                )
-                field_list = ", ".join(fields)
-                table_info.append(f"- Table `{table}`: {field_list}")
+                meta = self.schema_cfg.get("tables", {}).get(table, {})
+                custom = meta.get("customInfo")
+                if custom:
+                    table_info.append(f"- Table `{table}`: {custom}")
+                else:
+                    fields = meta.get("fields", [])
+                    field_list = ", ".join(fields)
+                    table_info.append(f"- Table `{table}`: {field_list}")
             if table_info:
                 lines.append(
                     "You are only allowed to use the following tables and fields:"
@@ -119,10 +122,22 @@ class PromptBuilder:
         for table, meta in self.schema_cfg.get("tables", {}).items():
             if allowed_tables and table not in allowed_tables:
                 continue
+            custom = meta.get("customInfo")
+            if custom:
+                info[table] = custom
+                continue
+
             description = meta.get("description", f"{table} table.")
             fields = meta.get("fields", [])
             field_list = ", ".join(fields)
-            info[table] = f"{table}: {description}\nColumns: {field_list}"
+            joins = meta.get("joins", [])
+            join_info = "; ".join(
+                f"{table}.{j['from_field']} -> {j['to_table']}.{j['to_field']}" for j in joins
+            )
+            text = f"{table}: {description}\nColumns: {field_list}"
+            if join_info:
+                text += f"\nJoins: {join_info}"
+            info[table] = text
         return info
 
     def translate_freeform(self, text: str) -> Dict[str, Any]:

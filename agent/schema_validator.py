@@ -36,11 +36,14 @@ def validate_schema_yaml(path: str) -> Dict[str, Any]:
 
         if "joins" in meta:
             assert isinstance(meta["joins"], list), f"❌ 'joins' in {table} must be a list"
-            for join in meta["joins"]:
-                assert isinstance(join, dict), f"❌ Each join in {table} must be a dictionary"
-                assert all(k in join for k in ["from_field", "to_table", "to_field"]), (
-                    f"❌ Each join in {table} must contain 'from_field', 'to_table', and 'to_field'"
-                )
+        for join in meta["joins"]:
+            assert isinstance(join, dict), f"❌ Each join in {table} must be a dictionary"
+            assert all(k in join for k in ["from_field", "to_table", "to_field"]), (
+                f"❌ Each join in {table} must contain 'from_field', 'to_table', and 'to_field'"
+            )
+
+        if "customInfo" in meta:
+            assert isinstance(meta["customInfo"], str), f"❌ customInfo in {table} must be a string"
 
     logging.info("✅ schema.yaml is valid and well-structured!")
     return data
