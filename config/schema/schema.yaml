@@ -7,6 +7,7 @@ tables:
   sales_order:
     description: Orders placed by customers. `increment_id` is usually referred to as the order number externally.
     fields: [entity_id, increment_id, grand_total, created_at]
+    customInfo: "entity_id links to customer_entity.entity_id via customer_id; entity_id joins sales_order_payment.parent_id"
     joins:
       - to_table: customer_entity
         from_field: customer_id
@@ -18,6 +19,7 @@ tables:
   sales_order_payment:
     description: Payment records for each order.
     fields: [parent_id, amount_paid, method]
+    customInfo: "parent_id relates to sales_order.entity_id"
     joins:
       - to_table: sales_order
         from_field: parent_id
@@ -26,6 +28,7 @@ tables:
   customer_entity:
     description: Customer profile information.
     fields: [entity_id, firstname, lastname, email]
+    customInfo: "entity_id joins customer_loyalty_card.customer_id"
     joins:
       - to_table: customer_loyalty_card  # 💡 Cross DB, conceptually allowed for lookup
         from_field: entity_id
@@ -37,6 +40,7 @@ tables:
       `card_id`, `card_number` and `customer_id` fields and has **no**
       wallet information.
     fields: [card_id, card_number, customer_id]
+    customInfo: "card_id joins customer_loyalty_ledger.card_id; customer_id links to customer_entity.entity_id"
     joins:
       - to_table: customer_entity
         from_field: customer_id
@@ -48,6 +52,7 @@ tables:
       points in `points_delta` with an optional `reason` and timestamp but
       does not store any order or payment amounts.
     fields: [entry_id, card_id, points_delta, reason, created_at, wallet_id]
+    customInfo: "card_id links customer_loyalty_card.card_id; wallet_id joins customer_wallet.entity_id"
     joins:
       - to_table: customer_wallet
         from_field: wallet_id
@@ -59,6 +64,7 @@ tables:
   customer_wallet:
     description: Wallets linked to customer accounts.
     fields: [entity_id, customer_id]
+    customInfo: "customer_id joins customer_entity.entity_id"
     joins:
       - to_table: customer_entity
         from_field: customer_id
