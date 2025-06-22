@@ -128,6 +128,7 @@ class PromptBuilder:
         return {"type": "text_response", "message": text.strip()}
 
 
+
 def _validate_query(query: str | dict, schema_map: Dict[str, List[str]]) -> None:
     """Ensure all table.column references in the query exist in the schema."""
     if isinstance(query, dict):
@@ -139,6 +140,7 @@ def _validate_query(query: str | dict, schema_map: Dict[str, List[str]]) -> None
             query,
             flags=re.I,
         ):
+
             alias_map[alias] = tbl
 
     pairs = re.findall(r"([a-zA-Z_][\w]*)\.([a-zA-Z_][\w]*)", query)
@@ -192,6 +194,7 @@ def get_live_sql_tools():
     for tool in tools:
         if tool.name == "sql_db_query":
             original = tool.run
+
 
             def run(query: str | dict = "", **kwargs):
                 q = query.get("query") if isinstance(query, dict) else query
@@ -254,6 +257,7 @@ def get_common_sql_tools():
                 _validate_query(q, schema_map)
                 return original(q, **kwargs)
 
+
             try:
                 tool.run = run
             except Exception:
@@ -262,10 +266,12 @@ def get_common_sql_tools():
             original = tool.run
 
             def schema_run(table_names: Optional[str] = None, **kwargs):
+
                 if isinstance(table_names, dict):
                     table_names = table_names.get("table_names")
                 names = (
                     [n.strip() for n in str(table_names).split(",")]
+
                     if table_names
                     else list(schema_map.keys())
                 )
