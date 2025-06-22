@@ -12,7 +12,7 @@ from agent.agent import build_chatbot_agent
 from agent.agent_router import _create_classifier_chain, _classify_query
 from langchain_openai import ChatOpenAI
 from agent.chat_history_repository import ChatHistoryRepository
-from config.reload import router as reload_router
+from agent.reload_config import router as reload_router
 
 # ------------------------
 # Request and Response Models
