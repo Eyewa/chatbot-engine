@@ -6,6 +6,17 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 import re
 
+
+def extract_table_names(sql: str) -> List[str]:
+    """Return list of table names found in FROM and JOIN clauses."""
+    tables = re.findall(r"(?i)\b(?:from|join)\s+([a-zA-Z_][\w]*)", sql)
+    # Preserve order while removing duplicates
+    seen = []
+    for t in tables:
+        if t not in seen:
+            seen.append(t)
+    return seen
+
 try:
     import yaml  # type: ignore
 except Exception:  # pragma: no cover - fallback when PyYAML isn't installed
@@ -211,11 +222,14 @@ def get_live_sql_tools():
             def schema_run(table_names: Optional[str] = None, **kwargs):
                 if isinstance(table_names, dict):
                     table_names = table_names.get("table_names")
-                names = (
-                    [n.strip() for n in str(table_names).split(",")]
-                    if table_names
-                    else list(schema_map.keys())
-                )
+                if table_names:
+                    text = str(table_names)
+                    if any(k in text.lower() for k in ("select", "from", "join")):
+                        names = extract_table_names(text)
+                    else:
+                        names = [n.strip() for n in text.split(",")]
+                else:
+                    names = list(schema_map.keys())
                 return json.dumps({n: schema_map.get(n, []) for n in names})
 
             try:
@@ -269,12 +283,14 @@ def get_common_sql_tools():
 
                 if isinstance(table_names, dict):
                     table_names = table_names.get("table_names")
-                names = (
-                    [n.strip() for n in str(table_names).split(",")]
-
-                    if table_names
-                    else list(schema_map.keys())
-                )
+                if table_names:
+                    text = str(table_names)
+                    if any(k in text.lower() for k in ("select", "from", "join")):
+                        names = extract_table_names(text)
+                    else:
+                        names = [n.strip() for n in text.split(",")]
+                else:
+                    names = list(schema_map.keys())
                 return json.dumps({n: schema_map.get(n, []) for n in names})
 
             try:

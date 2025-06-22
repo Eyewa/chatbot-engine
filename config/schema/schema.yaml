@@ -20,6 +20,7 @@ tables:
 
   sales_order:
     description: Orders placed by customers.
+    customInfo: "links: customer_entity, payments"
     fields: [entity_id, increment_id, customer_id, customer_firstname, customer_lastname, customer_email, grand_total, created_at]
     joins:
       - to_table: customer_entity
@@ -86,6 +87,7 @@ tables:
 
   customer_wallet:
     description: Wallets linked to customer accounts.
+    customInfo: "customer_id joins to customer_entity"
     fields: [entity_id, customer_id, store_code, status, customer_balance, cashback_balance, created_at, updated_at, loyalty_balance, next_loyalty_expiry, credits_balance]
     joins:
       - to_table: customer_entity
