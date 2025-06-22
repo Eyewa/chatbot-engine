@@ -87,46 +87,73 @@ def _create_common_agent():
     return _build_agent(tools, db_key="eyewa_common", allowed_tables=allowed, max_iterations=2)
 
 def _combine_responses(resp_live, resp_common):
-    """Merge two agent responses while keeping namespaces isolated."""
+    """Merge two agent responses with schema validation and namespacing."""
 
     builder = PromptBuilder()
 
-    def _parse(resp):
+    # Build allowed field sets per agent based on schema
+    def _fields_for_tables(tables: list[str]) -> set[str]:
+        fields = set()
+        for t in tables:
+            fields.update(builder.schema_cfg.get("tables", {}).get(t, {}).get("fields", []))
+        return fields
+
+    live_tables = ["sales_order", "customer_entity", "order_meta_data", "sales_order_address", "sales_order_payment"]
+    common_tables = ["customer_loyalty_card", "customer_loyalty_ledger", "customer_wallet"]
+    live_allowed = _fields_for_tables(live_tables)
+    common_allowed = _fields_for_tables(common_tables)
+
+    def _extract_json_blob(text: str) -> str:
+        """Return the first valid JSON object found in text."""
+        try:
+            json.loads(text)
+            return text
+        except Exception:
+            match = re.search(r"\{.*\}", text, re.DOTALL)
+            if match:
+                return match.group(0)
+        return text
+
+    def _parse(resp, allowed_fields: set[str]):
         if not resp:
             return None
         raw = str(getattr(resp, "content", resp))
-        data = builder.translate_freeform(raw)
+        cleaned_raw = _extract_json_blob(raw)
+        data = builder.translate_freeform(cleaned_raw)
         resp_type = data.get("type")
-        allowed = builder.response_cfg.get(resp_type, {}).get("fields", [])
         if resp_type != "text_response" and isinstance(data.get("data"), dict):
             cleaned = {}
             for key, value in data["data"].items():
-                if key in allowed:
+                if key in allowed_fields:
                     cleaned[key] = value
                 else:
-                    logging.info("Dropping unexpected key '%s' from %s", key, resp_type)
+                    logging.warning("Dropping unexpected key '%s' from %s", key, resp_type)
             data["data"] = cleaned
         return data
 
-    live_data = _parse(resp_live)
-    common_data = _parse(resp_common)
+    live_data = _parse(resp_live, live_allowed)
+    common_data = _parse(resp_common, common_allowed)
 
-    if live_data and common_data:
-        combined = {
-            "type": "mixed_summary",
-            "data": {
-                "live_data": live_data.get("data") if live_data.get("type") != "text_response" else {"message": live_data.get("message")},
-                "common_data": common_data.get("data") if common_data.get("type") != "text_response" else {"message": common_data.get("message")},
-            },
-        }
-        return json.dumps(combined)
+    merged = {"type": "mixed_summary", "data": {}}
 
     if live_data:
-        return json.dumps(live_data)
-    if common_data:
-        return json.dumps(common_data)
+        live_payload = (
+            live_data.get("data") if live_data.get("type") != "text_response" else {"message": live_data.get("message")}
+        )
+        if live_payload:
+            merged["data"]["live_data"] = live_payload
 
-    return json.dumps({"type": "text_response", "message": "No data"})
+    if common_data:
+        common_payload = (
+            common_data.get("data") if common_data.get("type") != "text_response" else {"message": common_data.get("message")}
+        )
+        if common_payload:
+            merged["data"]["common_data"] = common_payload
+
+    if merged["data"]:
+        return json.dumps(merged)
+
+    return json.dumps({"type": "text_response", "message": "No data available"})
 
 # -------------------------
 # ADVANCED BOTH HANDLER

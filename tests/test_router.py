@@ -2,6 +2,7 @@ import types
 from unittest import mock
 
 import pytest
+import json
 
 import agent.agent_router as agent_router
 
@@ -84,3 +85,32 @@ def test_handle_both_augments_query(monkeypatch):
     router.invoke({"input": "show orders for customer 42", "chat_history": []})
 
     assert any("customer 42" in s for s in sent)
+
+
+def test_combine_responses_filters_and_merges():
+    live = '{"type": "orders_summary", "data": {"grand_total": 100, "card_number": "777", "foo": "bar"}}'
+    common = '{"type": "loyalty_summary", "data": {"card_number": "777", "first_name": "John"}}'
+
+    out = agent_router._combine_responses(live, common)
+    result = json.loads(out)
+
+    assert result["type"] == "mixed_summary"
+    assert result["data"]["live_data"] == {"grand_total": 100}
+    assert result["data"]["common_data"] == {"card_number": "777"}
+
+
+def test_combine_responses_single_agent():
+    live = '{"type": "orders_summary", "data": {"grand_total": 50}}'
+
+    out = agent_router._combine_responses(live, None)
+    result = json.loads(out)
+
+    assert result["type"] == "mixed_summary"
+    assert result["data"] == {"live_data": {"grand_total": 50}}
+
+
+def test_combine_responses_no_data():
+    out = agent_router._combine_responses(None, None)
+    result = json.loads(out)
+
+    assert result == {"type": "text_response", "message": "No data available"}
