@@ -65,7 +65,7 @@ tables:
 
   customer_loyalty_card:
     description: Loyalty program cards linked to customers.
-    fields: [entity_id, customer_id, store_code, card_number, start_date, status, metadata, blocked_date, created_at, updated_at]
+    fields: [entity_id, wallet_id,customer_id, store_code, card_number, start_date, status, blocked_date, created_at, updated_at]
     joins:
       - to_table: customer_entity
         from_field: customer_id
@@ -76,7 +76,7 @@ tables:
 
   customer_loyalty_ledger:
     description: Loyalty point transactions per wallet/card.
-    fields: [entity_id, wallet_id, amount, available_amount, status, ledger_type, action, start_time, expiration_time, txn_id, external_txn_id, external_sales_id, order_id, external_rec_id, otc_order, default_loyalty, metadata, reason, created_at, updated_at]
+    fields: [entity_id, wallet_id, amount, available_amount, status, ledger_type, action, start_time, expiration_time, txn_id, external_txn_id, external_sales_id, order_id, external_rec_id, otc_order, default_loyalty, reason, created_at, updated_at]
     joins:
       - to_table: customer_wallet
         from_field: wallet_id
@@ -99,7 +99,7 @@ tables:
 
   customer_credits_ledger:
     description: Tracks credits transactions linked to customer wallets.
-    fields: [entity_id, wallet_id, action, ledger_type, opening_balance, amount, time, order_id, payment_mode, payment_id, erp_id, metadata, created_at, updated_at]
+    fields: [entity_id, wallet_id, action, ledger_type, opening_balance, amount, time, order_id, payment_mode, payment_id, erp_id, created_at, updated_at]
     joins:
       - to_table: customer_wallet
         from_field: wallet_id

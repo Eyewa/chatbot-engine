@@ -40,7 +40,7 @@ except Exception:
         raise ModuleNotFoundError("LangChain not installed")
 
 
-from tools.sql_tool import get_live_sql_tools, get_common_sql_tools
+from tools.sql_toolkit_factory import get_live_sql_tools, get_common_sql_tools
 from agent.prompt_builder import PromptBuilder
 
 # -------------------------
