@@ -95,6 +95,12 @@ class PromptBuilder:
         lines.append(
             "🛑 Do NOT use fields like 'loyalty_card', 'first_name', or 'point_delta' that are not listed above."
         )
+        lines.append(
+            "Before writing SQL, call the `sql_db_schema_*` tool for the target database to inspect available columns."
+        )
+        lines.append(
+            "Only join tables when both columns exist exactly as shown in the schema."
+        )
 
         if db == "eyewa_common":
             lines.append(
