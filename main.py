@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 from agent import build_chatbot_agent
+from agent_router import _create_classifier_chain, _classify_query
 from langchain_openai import ChatOpenAI
 from chat_history_repository import ChatHistoryRepository
 
@@ -80,6 +81,7 @@ def create_app() -> FastAPI:
 
     agent = build_chatbot_agent()
     repo = ChatHistoryRepository()
+    classifier_chain = _create_classifier_chain()
 
     @app.exception_handler(Exception)
     async def handle_error(request: Request, exc: Exception):
@@ -105,6 +107,7 @@ def create_app() -> FastAPI:
             logging.info("🧠 Processing input: %s", request.input)
             result = agent.invoke({"input": request.input, "chat_history": history})
             logging.info("✅ Agent responded successfully")
+            intent = _classify_query(request.input, classifier_chain)
 
             # Safely extract usable text
             raw_output = str(result)
@@ -115,7 +118,13 @@ def create_app() -> FastAPI:
 
             if request.conversation_id:
                 try:
-                    repo.save_message(request.conversation_id, request.input, final_output)
+                    repo.save_message(
+                        request.conversation_id,
+                        request.input,
+                        final_output,
+                        intent=intent,
+                        debug_info={"raw_output": raw_output},
+                    )
                 except Exception as e:
                     logging.warning("⚠️ Could not save chat history: %s", e)
 
