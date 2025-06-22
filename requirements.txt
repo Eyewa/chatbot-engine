@@ -1,3 +1,4 @@
+# --- Core Runtime ---
 fastapi>=0.100.0
 uvicorn[standard]==0.22.0
 python-dotenv>=1.0.0
@@ -5,11 +6,16 @@ openai>=1.13.3
 langchain==0.1.20
 langchain-community==0.0.38
 langchain-openai==0.0.5
-elasticsearch>=8.0.0
 sqlalchemy>=2.0.0
-pymysql>=1.0.2   # Required for MySQL support
-sse_starlette>=0.1.3
-httpx==0.27.0
-mysql-connector-python>=8.0
-mysqlclient>=2.2.0
+pymysql>=1.0.2           # For LangChain + MySQL
+mysqlclient>=2.2.0       # C-based MySQL driver (optional but faster)
+mysql-connector-python>=8.0  # Optional MySQL driver
+elasticsearch>=8.0.0
 PyYAML>=6.0
+
+# --- Async + Networking ---
+httpx==0.27.0
+sse_starlette>=0.1.3     # For real-time server events / streaming
+
+# --- Testing & Dev ---
+pytest>=7.0

@@ -12,6 +12,7 @@ from agent.agent import build_chatbot_agent
 from agent.agent_router import _create_classifier_chain, _classify_query
 from langchain_openai import ChatOpenAI
 from agent.chat_history_repository import ChatHistoryRepository
+from config.reload import router as reload_router
 
 # ------------------------
 # Request and Response Models
@@ -34,8 +35,7 @@ class ErrorResponse(BaseModel):
 # ------------------------
 
 def shorten_if_needed(output: str, max_tokens: int = 300) -> str:
-    """Shorten or rephrase output if it's too long."""
-    if len(output) > 1500:  # character threshold (~300 tokens)
+    if len(output) > 1500:
         try:
             llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
             system_msg = "Please rephrase the following response to be shorter, while keeping all important information intact."
@@ -49,7 +49,6 @@ def shorten_if_needed(output: str, max_tokens: int = 300) -> str:
     return output
 
 def extract_final_output(raw_output: str) -> str:
-    """Extract the last usable 'output' from raw response string."""
     try:
         matches = re.findall(r"\{.*?\}", raw_output, re.DOTALL)
         for item in reversed(matches):
@@ -58,7 +57,7 @@ def extract_final_output(raw_output: str) -> str:
                 return parsed["output"]
     except Exception as e:
         logging.warning("⚠️ Could not parse structured output: %s", e)
-    return raw_output.strip()  # fallback
+    return raw_output.strip()
 
 # ------------------------
 # FastAPI App Setup
@@ -78,6 +77,8 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    app.include_router(reload_router)
 
     agent = build_chatbot_agent()
     repo = ChatHistoryRepository()
@@ -113,11 +114,8 @@ def create_app() -> FastAPI:
             logging.info("🔍 Raw agent result: %s", result)
             intent = _classify_query(request.input, classifier_chain)
 
-            # Safely extract usable text
             raw_output = str(result)
             cleaned_output = extract_final_output(raw_output)
-
-            # Optionally summarize
             final_output = shorten_if_needed(cleaned_output) if request.summarize else cleaned_output
 
             if request.conversation_id:
