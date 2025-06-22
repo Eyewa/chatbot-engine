@@ -2,8 +2,8 @@
 
 try:
     import yaml  # type: ignore
-except Exception:  # PyYAML may be unavailable
-    yaml = None
+except Exception:  # pragma: no cover - fallback when PyYAML isn't installed
+    import simple_yaml as yaml
 import json
 from pathlib import Path
 from typing import Dict, Any, Optional
