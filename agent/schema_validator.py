@@ -5,6 +5,7 @@ try:
 except Exception:  # pragma: no cover - fallback when PyYAML isn't installed
     import simple_yaml as yaml
 import json
+import logging
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -41,7 +42,7 @@ def validate_schema_yaml(path: str) -> Dict[str, Any]:
                     f"❌ Each join in {table} must contain 'from_field', 'to_table', and 'to_field'"
                 )
 
-    print("✅ schema.yaml is valid and well-structured!")
+    logging.info("✅ schema.yaml is valid and well-structured!")
     return data
 
 def generate_openapi_schema(schema_data: Dict[str, Any]) -> Dict[str, Any]:
