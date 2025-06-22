@@ -6,8 +6,8 @@ import json
 
 try:
     import yaml  # type: ignore
-except Exception:
-    yaml = None
+except Exception:  # pragma: no cover - fallback when PyYAML isn't installed
+    import simple_yaml as yaml
 
 
 def load_custom_table_info(schema_path: str, table_names: List[str]) -> str:

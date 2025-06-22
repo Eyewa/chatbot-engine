@@ -7,8 +7,8 @@ from typing import Any, Dict, List, Optional
 
 try:
     import yaml  # type: ignore
-except Exception:
-    yaml = None
+except Exception:  # pragma: no cover - fallback when PyYAML isn't installed
+    import simple_yaml as yaml
 
 try:
     from dotenv import load_dotenv
