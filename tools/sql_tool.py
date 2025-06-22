@@ -20,7 +20,6 @@ try:  # Optional: LangChain and DB agent dependencies
 except Exception:
     SQLDatabase = None
     SQLDatabaseToolkit = None
-
     def ChatOpenAI(*args, **kwargs):
         raise ModuleNotFoundError("langchain not installed")
 
@@ -44,16 +43,34 @@ class PromptBuilder:
     def __init__(self, base_dir: str = "config"):
         self.response_cfg = self._load_yaml(Path(base_dir) / "templates" / "response_types.yaml")
         self.schema_cfg = self._load_yaml(Path(base_dir) / "schema" / "schema.yaml")
+        self._validate_schema()
 
     @staticmethod
     def _load_yaml(path: Path) -> Dict[str, Any]:
         if not path.exists():
+            logging.warning(f"⚠️ YAML file not found: {path}")
             return {}
-        with path.open("r", encoding="utf-8") as f:
-            return yaml.safe_load(f) or {}
+        try:
+            with path.open("r", encoding="utf-8") as f:
+                return yaml.safe_load(f) or {}
+        except Exception as e:
+            logging.error(f"❌ Failed to load YAML: {path} — {e}")
+            return {}
+
+    def _validate_schema(self):
+        tables = self.schema_cfg.get("tables", {})
+        if not isinstance(tables, dict):
+            raise ValueError("Schema YAML must contain a 'tables' dictionary")
+        for table, meta in tables.items():
+            if not isinstance(meta, dict):
+                logging.warning(f"⚠️ Table '{table}' metadata is not a dictionary. Skipping.")
+                continue
+            if "fields" not in meta:
+                raise ValueError(f"Missing 'fields' key in table definition for '{table}'")
+            if not isinstance(meta["fields"], list):
+                raise ValueError(f"'fields' for table '{table}' must be a list")
 
     def build_system_prompt(self, db: str = "", allowed_tables: List[str] = None) -> str:
-        """Generate a minimal system prompt to guide the LLM for the given DB."""
         types = ", ".join(self.response_cfg.keys())
         lines = [
             "You are Winkly — an intelligent, structured response assistant.",
@@ -62,13 +79,15 @@ class PromptBuilder:
 
         if allowed_tables:
             lines.append(f"You are using the `{db}` database with access to: {', '.join(allowed_tables)}.")
+        else:
+            allowed_tables = []
 
-        # Prevent cross-database join hallucination
         lines.append("⚠️ Tables with `_live` and `_common` suffixes belong to separate databases. Never join across them.")
 
-        # Join hints (for relational understanding)
         join_lines = []
         for table, meta in self.schema_cfg.get("tables", {}).items():
+            if not isinstance(meta, dict):
+                continue
             if allowed_tables and table not in allowed_tables:
                 continue
             for join in meta.get("joins", []):
@@ -78,23 +97,25 @@ class PromptBuilder:
             lines.append("Use these known joins when needed:")
             lines.extend(join_lines)
 
-        # Anti-hallucination
         lines.append("Do NOT hallucinate tables or fields. Only use those explicitly listed.")
-
         return "\n".join(lines)
 
     def build_custom_table_info(self) -> Dict[str, str]:
-        """Generate token-efficient LangChain-compatible table info for SQLDatabase."""
         table_info = {}
         for table, meta in self.schema_cfg.get("tables", {}).items():
+            if not isinstance(meta, dict):
+                logging.warning(f"⚠️ Skipping malformed metadata for table: {table}")
+                continue
             description = meta.get("description", f"{table} table.")
             fields = meta.get("fields", [])
+            if not isinstance(fields, list):
+                logging.warning(f"⚠️ 'fields' must be a list in table: {table}. Skipping.")
+                continue
             field_list = ", ".join(fields)
             table_info[table] = f"{table}: {description}\nColumns: {field_list}"
         return table_info
 
     def translate_freeform(self, text: str) -> Dict[str, Any]:
-        """Convert free-form output into structured response using config."""
         try:
             data = json.loads(text)
             if isinstance(data, dict) and data.get("type") in self.response_cfg:

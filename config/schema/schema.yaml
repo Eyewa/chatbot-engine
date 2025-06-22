@@ -26,6 +26,10 @@ tables:
   customer_entity:
     description: Customer profile information.
     fields: [entity_id, first_name, last_name, email, created_at]
+    joins:
+      - to_table: customer_loyalty_card  # 💡 Cross DB, conceptually allowed for lookup
+        from_field: entity_id
+        to_field: customer_id
 
   customer_loyalty_card:
     description: Loyalty program cards linked to customers.
