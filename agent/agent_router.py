@@ -109,7 +109,7 @@ def _create_common_agent():
     allowed = ["customer_loyalty_card", "customer_loyalty_ledger", "customer_wallet"]
     # Limit iterations to minimize repeated invalid SQL retries
     return _build_agent(
-        tools, db_key="eyewa_common", allowed_tables=allowed, max_iterations=2
+        tools, db_key="eyewa_common", allowed_tables=allowed, max_iterations=1
     )
 
 
@@ -228,12 +228,14 @@ def _handle_both(input_dict):
 
     attempts = 0
     cid = _extract_customer_id(input_text)
+    fallback_applied = False
     while attempts < 2 and common_resp is None:
         try:
-            if attempts == 1 and cid:
+            if attempts == 1 and cid and not fallback_applied:
                 sub_inputs["common"][
                     "input"
                 ] = f"SELECT card_number FROM customer_loyalty_card WHERE customer_id = {cid};"
+                fallback_applied = True
             common_resp = common_agent.invoke(sub_inputs["common"])
         except Exception as exc:
             attempts += 1
