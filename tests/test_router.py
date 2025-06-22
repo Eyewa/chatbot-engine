@@ -47,8 +47,16 @@ def test_router_branches(monkeypatch):
         calls.append("common")
         return "common"
 
-    monkeypatch.setattr(agent_router, "_create_live_agent", lambda: agent_router.RunnableLambda(fake_live))
-    monkeypatch.setattr(agent_router, "_create_common_agent", lambda: agent_router.RunnableLambda(fake_common))
+    monkeypatch.setattr(
+        agent_router,
+        "_create_live_agent",
+        lambda: agent_router.RunnableLambda(fake_live),
+    )
+    monkeypatch.setattr(
+        agent_router,
+        "_create_common_agent",
+        lambda: agent_router.RunnableLambda(fake_common),
+    )
     monkeypatch.setattr(agent_router, "_classify_query", lambda q, c: "both")
 
     router = agent_router.get_routed_agent()
@@ -77,8 +85,16 @@ def test_handle_both_augments_query(monkeypatch):
         sent.append(input_dict["input"])
         return "common"
 
-    monkeypatch.setattr(agent_router, "_create_live_agent", lambda: agent_router.RunnableLambda(fake_live))
-    monkeypatch.setattr(agent_router, "_create_common_agent", lambda: agent_router.RunnableLambda(fake_common))
+    monkeypatch.setattr(
+        agent_router,
+        "_create_live_agent",
+        lambda: agent_router.RunnableLambda(fake_live),
+    )
+    monkeypatch.setattr(
+        agent_router,
+        "_create_common_agent",
+        lambda: agent_router.RunnableLambda(fake_common),
+    )
     monkeypatch.setattr(agent_router, "_classify_query", lambda q, c: "both")
 
     router = agent_router.get_routed_agent()
@@ -113,4 +129,7 @@ def test_combine_responses_no_data():
     out = agent_router._combine_responses(None, None)
     result = json.loads(out)
 
-    assert result == {"type": "text_response", "message": "No data available"}
+    assert result == {
+        "type": "text_response",
+        "message": "No data found from either source",
+    }
