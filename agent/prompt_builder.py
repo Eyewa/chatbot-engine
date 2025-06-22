@@ -56,7 +56,9 @@ class PromptBuilder:
             lines.extend(join_lines)
 
         # Anti-hallucination
-        lines.append("🚫 Do NOT hallucinate tables or fields. Only use those explicitly listed.")
+        lines.append(
+            "🚫 Do NOT hallucinate tables or fields. Only query the tables and columns listed above."
+        )
 
         return "\n".join(lines)
 
