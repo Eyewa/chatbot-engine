@@ -59,7 +59,7 @@ def _classify_query(query: str, classifier_chain) -> str:
 # AGENT CONSTRUCTION
 # -------------------------
 
-def _build_agent(tools, db_key: str, allowed_tables: list[str]):
+def _build_agent(tools, db_key: str, allowed_tables: list[str], max_iterations: int = 5):
     builder = PromptBuilder()
     system_prompt = builder.build_system_prompt(db=db_key, allowed_tables=allowed_tables)
 
@@ -71,7 +71,7 @@ def _build_agent(tools, db_key: str, allowed_tables: list[str]):
         MessagesPlaceholder(variable_name="agent_scratchpad"),
     ])
     agent = create_openai_functions_agent(llm=llm, tools=tools, prompt=prompt)
-    return AgentExecutor(agent=agent, tools=tools, verbose=True)
+    return AgentExecutor(agent=agent, tools=tools, verbose=True, max_iterations=max_iterations)
 
 def _create_live_agent():
     tools = get_live_sql_tools()
@@ -81,7 +81,8 @@ def _create_live_agent():
 def _create_common_agent():
     tools = get_common_sql_tools()
     allowed = ["customer_loyalty_card", "customer_loyalty_ledger", "customer_wallet"]
-    return _build_agent(tools, db_key="eyewa_common", allowed_tables=allowed)
+    # Limit iterations to minimize repeated invalid SQL retries
+    return _build_agent(tools, db_key="eyewa_common", allowed_tables=allowed, max_iterations=2)
 
 def _combine_responses(resp_live, resp_common):
     parts = []
@@ -112,13 +113,33 @@ def _handle_both(input_dict):
         }
     }
 
+    live_resp = None
+    common_resp = None
+
     try:
         live_resp = live_agent.invoke(sub_inputs["live"])
+    except Exception as exc:
+        logging.error("Live agent error: %s", exc)
+
+    try:
         common_resp = common_agent.invoke(sub_inputs["common"])
-        return _combine_responses(live_resp, common_resp)
-    except Exception as e:
-        logging.error("_handle_both error: %s", e)
+    except Exception as exc:
+        logging.warning("Common agent failed: %s", exc)
+        cid = _extract_customer_id(input_text)
+        if cid:
+            fallback = {
+                "input": f"SELECT card_number FROM customer_loyalty_card WHERE customer_id = {cid};",
+                "chat_history": history,
+            }
+            try:
+                common_resp = common_agent.invoke(fallback)
+            except Exception as exc2:
+                logging.error("Fallback loyalty query failed: %s", exc2)
+
+    if not live_resp and not common_resp:
         return "⚠️ There was an error fetching data from both sources."
+
+    return _combine_responses(live_resp, common_resp)
 
 # -------------------------
 # ROUTED AGENT
