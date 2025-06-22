@@ -8,6 +8,7 @@ try:
 except Exception:  # pragma: no cover - fallback when PyYAML isn't installed
     import simple_yaml as yaml
 
+
 class PromptBuilder:
     """Load prompt configuration from YAML files with hot-reload support."""
 
@@ -16,7 +17,9 @@ class PromptBuilder:
 
     def __init__(self, base_dir: str = "config"):
         self.base_dir = Path(base_dir)
-        self.response_cfg = self._load_yaml(self.base_dir / "templates" / "response_types.yaml")
+        self.response_cfg = self._load_yaml(
+            self.base_dir / "templates" / "response_types.yaml"
+        )
         self.schema_cfg = self._load_yaml(self.base_dir / "schema" / "schema.yaml")
 
     @classmethod
@@ -39,19 +42,37 @@ class PromptBuilder:
             logging.warning(f"⚠️ Failed to load YAML: {path.name} — {e}")
             return {}
 
-    def build_system_prompt(self, db: str = "", allowed_tables: Optional[List[str]] = None) -> str:
+    def build_system_prompt(
+        self, db: str = "", allowed_tables: Optional[List[str]] = None
+    ) -> str:
         types = ", ".join(self.response_cfg.keys())
         lines = [
             "You are Winkly — an intelligent, structured response assistant.",
             f"Always respond using JSON with a top-level 'type'. Valid types are: {types}.",
         ]
         if allowed_tables:
-            lines.append(f"You are using the `{db}` database with access to: {', '.join(allowed_tables)}.")
+            lines.append(
+                f"You are using the `{db}` database with access to: {', '.join(allowed_tables)}."
+            )
+            table_info = []
+            for table in allowed_tables:
+                fields = (
+                    self.schema_cfg.get("tables", {}).get(table, {}).get("fields", [])
+                )
+                field_list = ", ".join(fields)
+                table_info.append(f"- Table `{table}`: {field_list}")
+            if table_info:
+                lines.append(
+                    "You are only allowed to use the following tables and fields:"
+                )
+                lines.extend(table_info)
         else:
             allowed_tables = []
 
         # Prevent cross-database join hallucination
-        lines.append("⚠️ Tables with `_live` and `_common` suffixes belong to separate databases. Never join across them.")
+        lines.append(
+            "⚠️ Tables with `_live` and `_common` suffixes belong to separate databases. Never join across them."
+        )
 
         join_lines = []
         for table, meta in self.schema_cfg.get("tables", {}).items():
@@ -59,7 +80,9 @@ class PromptBuilder:
                 continue
             for join in meta.get("joins", []):
                 if join.get("to_table") in allowed_tables:
-                    join_lines.append(f"{table}.{join['from_field']} → {join['to_table']}.{join['to_field']}")
+                    join_lines.append(
+                        f"{table}.{join['from_field']} → {join['to_table']}.{join['to_field']}"
+                    )
         if join_lines:
             lines.append("Use these known joins when needed:")
             lines.extend(join_lines)
@@ -68,17 +91,23 @@ class PromptBuilder:
         lines.append(
             "🚫 Do NOT hallucinate tables or fields. Only query the tables and columns listed above."
         )
+        lines.append("⚠️ You must not hallucinate or guess column names.")
+        lines.append(
+            "🛑 Do NOT use fields like 'loyalty_card' in eyewa_live — that belongs to eyewa_common."
+        )
 
         if db == "eyewa_common":
             lines.append(
                 "You MUST only query these tables and fields. Do NOT assume or guess column names. "
                 "No cross-database joins are allowed. If loyalty info is not present, fallback to: "
-                "SELECT card_number FROM customer_loyalty_card WHERE customer_id = {X};"
+                "SELECT card_number FROM customer_loyalty_card WHERE customer_id = <ID>;"
             )
 
         return "\n".join(lines)
 
-    def build_custom_table_info(self, allowed_tables: Optional[List[str]] = None) -> Dict[str, str]:
+    def build_custom_table_info(
+        self, allowed_tables: Optional[List[str]] = None
+    ) -> Dict[str, str]:
         """Return LangChain-compatible table info for allowed tables only."""
         info = {}
         for table, meta in self.schema_cfg.get("tables", {}).items():
@@ -103,8 +132,16 @@ class PromptBuilder:
         assert isinstance(self.schema_cfg, dict), "Schema must be a dictionary"
         for table, meta in self.schema_cfg.get("tables", {}).items():
             assert "fields" in meta, f"Missing fields for table {table}"
-            assert isinstance(meta.get("fields"), list), f"Fields for table {table} must be a list"
+            assert isinstance(
+                meta.get("fields"), list
+            ), f"Fields for table {table} must be a list"
             if "joins" in meta:
-                assert isinstance(meta["joins"], list), f"Joins for table {table} must be a list"
+                assert isinstance(
+                    meta["joins"], list
+                ), f"Joins for table {table} must be a list"
                 for join in meta["joins"]:
-                    assert "from_field" in join and "to_table" in join and "to_field" in join, f"Invalid join format in {table}"
+                    assert (
+                        "from_field" in join
+                        and "to_table" in join
+                        and "to_field" in join
+                    ), f"Invalid join format in {table}"

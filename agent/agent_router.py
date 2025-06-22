@@ -15,6 +15,7 @@ try:
         RunnablePassthrough,
     )
     from langchain_openai import ChatOpenAI
+
     LANGCHAIN_AVAILABLE = True
 except Exception:
     LANGCHAIN_AVAILABLE = False
@@ -22,12 +23,14 @@ except Exception:
     class RunnableLambda:
         def __init__(self, func):
             self.func = func
+
         def invoke(self, input_dict):
             return self.func(input_dict)
 
     class AgentExecutor:
         def __init__(self, agent=None, tools=None, verbose=False):
             self.agent = agent
+
         def invoke(self, input_dict):
             if callable(self.agent):
                 return self.agent(input_dict)
@@ -36,6 +39,7 @@ except Exception:
     def ChatOpenAI(*args, **kwargs):
         raise ModuleNotFoundError("LangChain not installed")
 
+
 from tools.sql_tool import get_live_sql_tools, get_common_sql_tools
 from agent.prompt_builder import PromptBuilder
 
@@ -43,9 +47,11 @@ from agent.prompt_builder import PromptBuilder
 # CLASSIFIER & INTENT
 # -------------------------
 
+
 def _extract_customer_id(query: str) -> Optional[str]:
     match = re.search(r"customer\s+(\d+)", query, re.IGNORECASE)
     return match.group(1) if match else None
+
 
 def _classify_query(query: str, classifier_chain) -> str:
     q = query.lower()
@@ -57,34 +63,55 @@ def _classify_query(query: str, classifier_chain) -> str:
         logging.error("Classifier error: %s", exc)
         return "both"
 
+
 # -------------------------
 # AGENT CONSTRUCTION
 # -------------------------
 
-def _build_agent(tools, db_key: str, allowed_tables: list[str], max_iterations: int = 5):
+
+def _build_agent(
+    tools, db_key: str, allowed_tables: list[str], max_iterations: int = 5
+):
     builder = PromptBuilder()
-    system_prompt = builder.build_system_prompt(db=db_key, allowed_tables=allowed_tables)
+    system_prompt = builder.build_system_prompt(
+        db=db_key, allowed_tables=allowed_tables
+    )
 
     llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", system_prompt),
-        MessagesPlaceholder(variable_name="chat_history"),
-        ("user", "{input}"),
-        MessagesPlaceholder(variable_name="agent_scratchpad"),
-    ])
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", system_prompt),
+            MessagesPlaceholder(variable_name="chat_history"),
+            ("user", "{input}"),
+            MessagesPlaceholder(variable_name="agent_scratchpad"),
+        ]
+    )
     agent = create_openai_functions_agent(llm=llm, tools=tools, prompt=prompt)
-    return AgentExecutor(agent=agent, tools=tools, verbose=True, max_iterations=max_iterations)
+    return AgentExecutor(
+        agent=agent, tools=tools, verbose=True, max_iterations=max_iterations
+    )
+
 
 def _create_live_agent():
     tools = get_live_sql_tools()
-    allowed = ["sales_order", "customer_entity", "order_meta_data", "sales_order_address", "sales_order_payment"]
+    allowed = [
+        "sales_order",
+        "customer_entity",
+        "order_meta_data",
+        "sales_order_address",
+        "sales_order_payment",
+    ]
     return _build_agent(tools, db_key="eyewa_live", allowed_tables=allowed)
+
 
 def _create_common_agent():
     tools = get_common_sql_tools()
     allowed = ["customer_loyalty_card", "customer_loyalty_ledger", "customer_wallet"]
     # Limit iterations to minimize repeated invalid SQL retries
-    return _build_agent(tools, db_key="eyewa_common", allowed_tables=allowed, max_iterations=2)
+    return _build_agent(
+        tools, db_key="eyewa_common", allowed_tables=allowed, max_iterations=2
+    )
+
 
 def _combine_responses(resp_live, resp_common):
     """Merge two agent responses with schema validation and namespacing."""
@@ -95,11 +122,23 @@ def _combine_responses(resp_live, resp_common):
     def _fields_for_tables(tables: list[str]) -> set[str]:
         fields = set()
         for t in tables:
-            fields.update(builder.schema_cfg.get("tables", {}).get(t, {}).get("fields", []))
+            fields.update(
+                builder.schema_cfg.get("tables", {}).get(t, {}).get("fields", [])
+            )
         return fields
 
-    live_tables = ["sales_order", "customer_entity", "order_meta_data", "sales_order_address", "sales_order_payment"]
-    common_tables = ["customer_loyalty_card", "customer_loyalty_ledger", "customer_wallet"]
+    live_tables = [
+        "sales_order",
+        "customer_entity",
+        "order_meta_data",
+        "sales_order_address",
+        "sales_order_payment",
+    ]
+    common_tables = [
+        "customer_loyalty_card",
+        "customer_loyalty_ledger",
+        "customer_wallet",
+    ]
     live_allowed = _fields_for_tables(live_tables)
     common_allowed = _fields_for_tables(common_tables)
 
@@ -127,7 +166,9 @@ def _combine_responses(resp_live, resp_common):
                 if key in allowed_fields:
                     cleaned[key] = value
                 else:
-                    logging.warning("Dropping unexpected key '%s' from %s", key, resp_type)
+                    logging.warning(
+                        "Dropping unexpected key '%s' from %s", key, resp_type
+                    )
             data["data"] = cleaned
         return data
 
@@ -136,28 +177,28 @@ def _combine_responses(resp_live, resp_common):
 
     merged = {"type": "mixed_summary", "data": {}}
 
-    if live_data:
-        live_payload = (
-            live_data.get("data") if live_data.get("type") != "text_response" else {"message": live_data.get("message")}
-        )
-        if live_payload:
-            merged["data"]["live_data"] = live_payload
+    if live_data and live_data.get("type") != "text_response" and live_data.get("data"):
+        merged["data"]["live_data"] = live_data["data"]
 
-    if common_data:
-        common_payload = (
-            common_data.get("data") if common_data.get("type") != "text_response" else {"message": common_data.get("message")}
-        )
-        if common_payload:
-            merged["data"]["common_data"] = common_payload
+    if (
+        common_data
+        and common_data.get("type") != "text_response"
+        and common_data.get("data")
+    ):
+        merged["data"]["common_data"] = common_data["data"]
 
     if merged["data"]:
         return json.dumps(merged)
 
-    return json.dumps({"type": "text_response", "message": "No data available"})
+    return json.dumps(
+        {"type": "text_response", "message": "No data found from either source"}
+    )
+
 
 # -------------------------
 # ADVANCED BOTH HANDLER
 # -------------------------
+
 
 def _handle_both(input_dict):
     logging.info("🔀 Handling BOTH agent path")
@@ -168,12 +209,12 @@ def _handle_both(input_dict):
     sub_inputs = {
         "live": {
             "input": input_text + " (only fetch from orders, payments, customers)",
-            "chat_history": history
+            "chat_history": history,
         },
         "common": {
             "input": input_text + " (only fetch from loyalty, wallet, ledger)",
-            "chat_history": history
-        }
+            "chat_history": history,
+        },
     }
 
     live_resp = None
@@ -189,9 +230,9 @@ def _handle_both(input_dict):
     while attempts < 2 and common_resp is None:
         try:
             if attempts == 1 and cid:
-                sub_inputs["common"]["input"] = (
-                    f"SELECT card_number FROM customer_loyalty_card WHERE customer_id = {cid};"
-                )
+                sub_inputs["common"][
+                    "input"
+                ] = f"SELECT card_number FROM customer_loyalty_card WHERE customer_id = {cid};"
             common_resp = common_agent.invoke(sub_inputs["common"])
         except Exception as exc:
             attempts += 1
@@ -204,22 +245,27 @@ def _handle_both(input_dict):
 
     return _combine_responses(live_resp, common_resp)
 
+
 # -------------------------
 # ROUTED AGENT
 # -------------------------
 
+
 def _create_classifier_chain():
     if not LANGCHAIN_AVAILABLE:
+
         class Dummy:
             def invoke(self, payload):
                 return "both"
+
         return Dummy()
 
     llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
-    prompt = ChatPromptTemplate.from_messages([
-        (
-            "system",
-            """
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                """
         You are an intent classifier for a chatbot that handles eyewear customer queries.
         Determine the source of data needed for the query:
         - If it concerns order details, customers, order_meta_data, sales_order_payment: respond "live"
@@ -227,10 +273,12 @@ def _create_classifier_chain():
         - If the query relates to both (e.g., orders + loyalty, customer + ledger), respond "both"
         Respond only with: live, common, or both.
         """,
-        ),
-        ("user", "{input}"),
-    ])
+            ),
+            ("user", "{input}"),
+        ]
+    )
     return prompt | llm | StrOutputParser()
+
 
 def get_routed_agent():
     global live_agent, common_agent
@@ -245,6 +293,7 @@ def get_routed_agent():
         return intent
 
     if not LANGCHAIN_AVAILABLE:
+
         class SimpleRouter:
             def invoke(self, input_dict):
                 intent = _classify(input_dict)
@@ -253,17 +302,16 @@ def get_routed_agent():
                 if intent == "common":
                     return common_agent.invoke(input_dict)
                 return _handle_both(input_dict)
+
         return SimpleRouter()
 
-    router = (
-        RunnablePassthrough()
-        .assign(intent=RunnableLambda(_classify))
-        | RunnableBranch(
-            (lambda x: x["intent"] == "live", live_agent),
-            (lambda x: x["intent"] == "common", common_agent),
-            (lambda x: x["intent"] == "both", RunnableLambda(_handle_both)),
-            RunnableLambda(_handle_both),
-        )
+    router = RunnablePassthrough().assign(
+        intent=RunnableLambda(_classify)
+    ) | RunnableBranch(
+        (lambda x: x["intent"] == "live", live_agent),
+        (lambda x: x["intent"] == "common", common_agent),
+        (lambda x: x["intent"] == "both", RunnableLambda(_handle_both)),
+        RunnableLambda(_handle_both),
     )
 
     return router
