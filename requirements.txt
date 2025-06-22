@@ -19,3 +19,4 @@ sse_starlette>=0.1.3     # For real-time server events / streaming
 
 # --- Testing & Dev ---
 pytest>=7.0
+sqlparse>=0.4.4
