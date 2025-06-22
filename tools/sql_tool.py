@@ -9,13 +9,42 @@ import re
 
 def extract_table_names(sql: str) -> List[str]:
     """Return list of table names found in FROM and JOIN clauses."""
-    tables = re.findall(r"(?i)\b(?:from|join)\s+([a-zA-Z_][\w]*)", sql)
-    # Preserve order while removing duplicates
-    seen = []
-    for t in tables:
-        if t not in seen:
-            seen.append(t)
-    return seen
+    try:
+        import sqlparse
+        from sqlparse.sql import IdentifierList, Identifier
+        from sqlparse.tokens import Keyword
+
+        parsed = sqlparse.parse(sql)
+        if not parsed:
+            return []
+        statement = parsed[0]
+        names: List[str] = []
+        from_seen = False
+        for token in statement.tokens:
+            if from_seen:
+                if isinstance(token, IdentifierList):
+                    for identifier in token.get_identifiers():
+                        name = identifier.get_real_name()
+                        if name and name not in names:
+                            names.append(name)
+                elif isinstance(token, Identifier):
+                    name = token.get_real_name()
+                    if name and name not in names:
+                        names.append(name)
+                elif token.ttype is Keyword:
+                    from_seen = token.value.upper() == "JOIN"
+                    if token.value.upper() not in {"FROM", "JOIN"}:
+                        break
+            if token.ttype is Keyword and token.value.upper() in ("FROM", "JOIN"):
+                from_seen = True
+        return names
+    except Exception:
+        tables = re.findall(r"(?i)\b(?:from|join)\s+([a-zA-Z_][\w]*)", sql)
+        seen: List[str] = []
+        for t in tables:
+            if t not in seen:
+                seen.append(t)
+        return seen
 
 try:
     import yaml  # type: ignore
