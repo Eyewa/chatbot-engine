@@ -1,6 +1,7 @@
 # Repository for persisting chat history to MySQL
 import os
-from typing import List
+import json
+from typing import Any, Dict, List, Optional
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 
@@ -15,20 +16,41 @@ class ChatHistoryRepository:
             raise ValueError("SQL_DATABASE_URI_LIVE is not set")
         self.engine = create_engine(uri)
 
-    def save_message(self, conversation_id: str, user_input: str, agent_output: str) -> None:
-        """Persist a single interaction."""
+    def save_message(
+        self,
+        conversation_id: str,
+        user_input: str,
+        agent_output: str,
+        *,
+        intent: Optional[str] = None,
+        debug_info: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Persist a single interaction along with optional debug metadata."""
         with self.engine.begin() as conn:
             conn.execute(
                 text(
                     """
-                    INSERT INTO chatbot_engine_query (conversation_id, user_input, agent_output)
-                    VALUES (:conversation_id, :user_input, :agent_output)
+                    INSERT INTO chatbot_engine_query_logs (
+                        conversation_id,
+                        user_input,
+                        agent_output,
+                        intent,
+                        debug_info
+                    ) VALUES (
+                        :conversation_id,
+                        :user_input,
+                        :agent_output,
+                        :intent,
+                        :debug_info
+                    )
                     """
                 ),
                 {
                     "conversation_id": conversation_id,
                     "user_input": user_input,
                     "agent_output": agent_output,
+                    "intent": intent,
+                    "debug_info": json.dumps(debug_info) if debug_info is not None else None,
                 },
             )
 
@@ -39,7 +61,7 @@ class ChatHistoryRepository:
                 text(
                     """
                     SELECT user_input, agent_output
-                    FROM chatbot_engine_query
+                    FROM chatbot_engine_query_logs
                     WHERE conversation_id = :conversation_id
                     ORDER BY id ASC
                     """

@@ -4,8 +4,28 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnableBranch, RunnableLambda, RunnablePassthrough
 from langchain_openai import ChatOpenAI
 import logging
+import re
 
 from tools.sql_tool import get_live_sql_tools, get_common_sql_tools
+from typing import Optional
+
+
+def _extract_customer_id(query: str) -> Optional[str]:
+    """Return customer ID if present in the query."""
+    match = re.search(r"customer\s+(\d+)", query, re.IGNORECASE)
+    return match.group(1) if match else None
+
+
+def _classify_query(query: str, classifier_chain) -> str:
+    """Classify a query using simple heuristics then an LLM chain."""
+    q = query.lower()
+    if "order" in q and "loyalty" in q:
+        return "both"
+    try:
+        return classifier_chain.invoke({"input": query}).strip().lower()
+    except Exception as exc:  # pragma: no cover - LLM errors
+        logging.error("Classifier error: %s", exc)
+        return "both"
 
 def _build_agent(tools, system_message):
     llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
@@ -34,33 +54,36 @@ def _combine_responses(resp_live, resp_common):
         parts.append(str(getattr(resp_common, "content", resp_common)))
     return "\n".join(parts)
 
+
+def _create_classifier_chain():
+    llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
+    prompt = ChatPromptTemplate.from_messages([
+        (
+            "system",
+            """
+        You are an intent classifier for a chatbot that handles eyewear customer queries.
+        Determine the source of data needed for the query:
+        - If it concerns order details, customers, order_meta_data, sales_order_payment: respond "live"
+        - If it concerns loyalty cards, loyalty ledger: respond "common"
+        - If the query relates to both (e.g., orders + loyalty, customer + ledger), respond "both"
+        Respond only with: live, common, or both.
+        """,
+        ),
+        ("user", "{input}"),
+    ])
+    return prompt | llm | StrOutputParser()
+
 def get_routed_agent():
     live_agent = _create_live_agent()
     common_agent = _create_common_agent()
 
-    llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
-    classifier_prompt = ChatPromptTemplate.from_messages([
-        ("system", """
-        You are an intent classifier for a chatbot that handles eyewear customer queries.
-        Determine the source of data needed for the query:
-        - If it concerns order details, customers, order_meta_data, sales_order_payment: respond \"live\"
-        - If it concerns loyalty cards, loyalty ledger: respond \"common\"
-        - If the query relates to both (e.g., orders + loyalty, customer + ledger), respond \"both\"
-        Respond only with: live, common, or both.
-        """),
-        ("user", "{input}"),
-    ])
-    classifier_chain = classifier_prompt | llm | StrOutputParser()
+    classifier_chain = _create_classifier_chain()
 
     def _classify(input_dict):
         query = input_dict.get("input", "")
-        try:
-            intent = classifier_chain.invoke({"input": query}).strip().lower()
-            logging.info("🏷️ Classifier prediction: %s", intent)
-            return intent
-        except Exception as e:
-            logging.error("Classifier error: %s", e)
-            return "both"
+        intent = _classify_query(query, classifier_chain)
+        logging.info("🏷️ Classifier prediction: %s", intent)
+        return intent
 
     def _handle_both(input_dict):
         logging.info("🔀 Handling BOTH agent path")
