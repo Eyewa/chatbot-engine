@@ -11,9 +11,9 @@ class ChatHistoryRepository:
     """Simple repository that saves and retrieves chat history."""
 
     def __init__(self):
-        uri = os.getenv("SQL_DATABASE_URI_LIVE")
+        uri = os.getenv("SQL_DATABASE_URI_LIVE_WRITE")
         if not uri:
-            raise ValueError("SQL_DATABASE_URI_LIVE is not set")
+            raise ValueError("SQL_DATABASE_URI_LIVE_WRITE is not set")
         self.engine = create_engine(uri)
 
     def save_message(
@@ -57,7 +57,7 @@ class ChatHistoryRepository:
     def fetch_history(self, conversation_id: str) -> List[str]:
         """Return chat history as a list alternating user and assistant messages."""
         with self.engine.connect() as conn:
-            rows = conn.execute(
+            result = conn.execute(
                 text(
                     """
                     SELECT user_input, agent_output
@@ -67,9 +67,11 @@ class ChatHistoryRepository:
                     """
                 ),
                 {"conversation_id": conversation_id},
-            )
+            ).mappings()  # 👈 This makes each row accessible by column name
+
             history: List[str] = []
-            for row in rows:
+            for row in result:
                 history.append(row["user_input"])
                 history.append(row["agent_output"])
             return history
+
