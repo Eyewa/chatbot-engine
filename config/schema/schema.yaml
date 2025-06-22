@@ -70,17 +70,14 @@ tables:
       - to_table: customer_entity
         from_field: customer_id
         to_field: entity_id
-      - to_table: customer_loyalty_ledger
-        from_field: entity_id
-        to_field: card_id
+      - to_table: customer_wallet
+        from_field: wallet_id
+        to_field:  entity_id
 
   customer_loyalty_ledger:
     description: Loyalty point transactions per wallet/card.
     fields: [entity_id, wallet_id, amount, available_amount, status, ledger_type, action, start_time, expiration_time, txn_id, external_txn_id, external_sales_id, order_id, external_rec_id, otc_order, default_loyalty, metadata, reason, created_at, updated_at]
     joins:
-      - to_table: customer_loyalty_card
-        from_field: card_id
-        to_field: entity_id
       - to_table: customer_wallet
         from_field: wallet_id
         to_field: entity_id
