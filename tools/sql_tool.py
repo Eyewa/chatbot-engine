@@ -174,14 +174,14 @@ def _validate_query(query: str | dict, schema_map: Dict[str, List[str]]) -> None
     if isinstance(query, dict):
         query = query.get("query", "")
     alias_map = {}
-    for kw in ["from", "join"]:
-        for tbl, alias in re.findall(
-            fr"{kw}\s+([a-zA-Z_][\w]*)\s+(?:as\s+)?([a-zA-Z_][\w]*)",
-            query,
-            flags=re.I,
-        ):
-
+    for tbl, alias in re.findall(
+        r"(?i)\b(?:from|join)\s+([a-zA-Z_][\w]*)\s*(?:as\s+)?([a-zA-Z_][\w]*)?",
+        query,
+    ):
+        if alias:
             alias_map[alias] = tbl
+        else:
+            alias_map[tbl] = tbl
 
     pairs = re.findall(r"([a-zA-Z_][\w]*)\.([a-zA-Z_][\w]*)", query)
     for table, column in pairs:
