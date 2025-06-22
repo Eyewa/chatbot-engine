@@ -187,6 +187,7 @@ def get_live_sql_tools():
         if tool.name == "sql_db_query":
             original = tool.run
 
+
             def run(query: str, **kwargs):
                 _validate_query(query, schema_map)
                 return original(query, **kwargs)
@@ -197,6 +198,7 @@ def get_live_sql_tools():
                 object.__setattr__(tool, "run", run)
         if tool.name == "sql_db_schema":
             original = tool.run
+
 
             def schema_run(table_names: Optional[str] = None, **kwargs):
                 names = (
@@ -252,6 +254,7 @@ def get_common_sql_tools():
             original = tool.run
 
             def schema_run(table_names: Optional[str] = None, **kwargs):
+
                 names = (
                     [n.strip() for n in table_names.split(",")]
                     if table_names
