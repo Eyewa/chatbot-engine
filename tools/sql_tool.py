@@ -4,6 +4,7 @@ import logging
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+import re
 
 try:
     import yaml  # type: ignore
@@ -127,6 +128,21 @@ class PromptBuilder:
         return {"type": "text_response", "message": text.strip()}
 
 
+def _validate_query(query: str, schema_map: Dict[str, List[str]]) -> None:
+    """Ensure all table.column references in the query exist in the schema."""
+    alias_map = {}
+    for kw in ["from", "join"]:
+        for tbl, alias in re.findall(fr"{kw}\s+([a-zA-Z_][\w]*)\s+(?:as\s+)?([a-zA-Z_][\w]*)", query, flags=re.I):
+            alias_map[alias] = tbl
+
+    pairs = re.findall(r"([a-zA-Z_][\w]*)\.([a-zA-Z_][\w]*)", query)
+    for table, column in pairs:
+        actual = alias_map.get(table, table)
+        fields = schema_map.get(actual)
+        if fields is not None and column not in fields:
+            raise ValueError(f"Invalid column: {actual}.{column}")
+
+
 # ------------------------------------------
 # SQL tools factory for live and common DBs
 # ------------------------------------------
@@ -153,6 +169,11 @@ def get_live_sql_tools():
 
     custom_info = builder.build_custom_table_info(allowed_tables)
 
+    schema_map = {
+        table: builder.schema_cfg.get("tables", {}).get(table, {}).get("fields", [])
+        for table in allowed_tables
+    }
+
     uri = os.getenv("SQL_DATABASE_URI_LIVE")
     db = SQLDatabase.from_uri(
         uri,
@@ -162,6 +183,27 @@ def get_live_sql_tools():
     )
     logging.info("✅ Loaded live DB tables: %s", db.get_usable_table_names())
     tools = SQLDatabaseToolkit(db=db, llm=llm).get_tools()
+    for tool in tools:
+        if tool.name == "sql_db_query":
+            original = tool.run
+
+            def run(query: str):
+                _validate_query(query, schema_map)
+                return original(query)
+
+            tool.run = run
+        if tool.name == "sql_db_schema":
+            original = tool.run
+
+            def schema_run(table_names: Optional[str] = None):
+                names = (
+                    [n.strip() for n in table_names.split(",")]
+                    if table_names
+                    else list(schema_map.keys())
+                )
+                return json.dumps({n: schema_map.get(n, []) for n in names})
+
+            tool.run = schema_run
     return _rename_tools(tools, "live")
 
 
@@ -174,6 +216,11 @@ def get_common_sql_tools():
     allowed_tables = ["customer_loyalty_card", "customer_loyalty_ledger", "customer_wallet"]
     custom_info = builder.build_custom_table_info(allowed_tables)
 
+    schema_map = {
+        table: builder.schema_cfg.get("tables", {}).get(table, {}).get("fields", [])
+        for table in allowed_tables
+    }
+
     uri = os.getenv("SQL_DATABASE_URI_COMMON")
     db = SQLDatabase.from_uri(
         uri,
@@ -183,4 +230,25 @@ def get_common_sql_tools():
     )
     logging.info("✅ Loaded common DB tables: %s", db.get_usable_table_names())
     tools = SQLDatabaseToolkit(db=db, llm=llm).get_tools()
+    for tool in tools:
+        if tool.name == "sql_db_query":
+            original = tool.run
+
+            def run(query: str):
+                _validate_query(query, schema_map)
+                return original(query)
+
+            tool.run = run
+        if tool.name == "sql_db_schema":
+            original = tool.run
+
+            def schema_run(table_names: Optional[str] = None):
+                names = (
+                    [n.strip() for n in table_names.split(",")]
+                    if table_names
+                    else list(schema_map.keys())
+                )
+                return json.dumps({n: schema_map.get(n, []) for n in names})
+
+            tool.run = schema_run
     return _rename_tools(tools, "common")

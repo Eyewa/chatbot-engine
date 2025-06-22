@@ -164,31 +164,36 @@ def _combine_responses(resp_live, resp_common):
         cleaned_raw = _extract_json_blob(raw)
         data = builder.translate_freeform(cleaned_raw)
         resp_type = data.get("type")
-        if resp_type != "text_response" and isinstance(data.get("data"), dict):
-            original = data["data"]
-            cleaned = filter_fields(original, allowed_fields)
-            dropped = set(original) - set(cleaned)
+        payload = data.get("data")
+        if payload is None and isinstance(data, dict):
+            payload = {k: v for k, v in data.items() if k != "type"}
+        if resp_type != "text_response" and isinstance(payload, dict):
+            cleaned = filter_fields(payload, allowed_fields)
+            dropped = set(payload) - set(cleaned)
             for key in dropped:
                 logging.warning("Dropping unexpected key '%s' from %s", key, resp_type)
-            data["data"] = cleaned
+            return {"type": resp_type, "data": cleaned}
         return data
 
     live_data = _parse(resp_live, live_allowed)
     common_data = _parse(resp_common, common_allowed)
 
-    merged = {"type": "mixed_summary", "data": {}}
+    merged = {
+        "type": "mixed_summary",
+        "data": {"orders": None, "loyalty_card": None},
+    }
 
     if live_data and live_data.get("type") != "text_response" and live_data.get("data"):
-        merged["data"]["live_data"] = live_data["data"]
+        merged["data"]["orders"] = live_data["data"]
 
     if (
         common_data
         and common_data.get("type") != "text_response"
         and common_data.get("data")
     ):
-        merged["data"]["common_data"] = common_data["data"]
+        merged["data"]["loyalty_card"] = common_data["data"]
 
-    if merged["data"]:
+    if merged["data"]["orders"] is not None or merged["data"]["loyalty_card"] is not None:
         return json.dumps(merged)
 
     return json.dumps(

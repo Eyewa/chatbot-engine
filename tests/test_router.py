@@ -111,8 +111,8 @@ def test_combine_responses_filters_and_merges():
     result = json.loads(out)
 
     assert result["type"] == "mixed_summary"
-    assert result["data"]["live_data"] == {"grand_total": 100}
-    assert result["data"]["common_data"] == {"card_number": "777"}
+    assert result["data"]["orders"] == {"grand_total": 100}
+    assert result["data"]["loyalty_card"] == {"card_number": "777"}
 
 
 def test_combine_responses_single_agent():
@@ -122,7 +122,7 @@ def test_combine_responses_single_agent():
     result = json.loads(out)
 
     assert result["type"] == "mixed_summary"
-    assert result["data"] == {"live_data": {"grand_total": 50}}
+    assert result["data"] == {"orders": {"grand_total": 50}, "loyalty_card": None}
 
 
 def test_combine_responses_no_data():
