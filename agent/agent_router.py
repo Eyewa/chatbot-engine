@@ -87,26 +87,45 @@ def _create_common_agent():
     return _build_agent(tools, db_key="eyewa_common", allowed_tables=allowed, max_iterations=2)
 
 def _combine_responses(resp_live, resp_common):
+    """Merge two agent responses while keeping namespaces isolated."""
+
     builder = PromptBuilder()
-    live_data = None
-    common_data = None
-    if resp_live:
-        live_raw = str(getattr(resp_live, "content", resp_live))
-        live_data = builder.translate_freeform(live_raw)
-    if resp_common:
-        common_raw = str(getattr(resp_common, "content", resp_common))
-        common_data = builder.translate_freeform(common_raw)
+
+    def _parse(resp):
+        if not resp:
+            return None
+        raw = str(getattr(resp, "content", resp))
+        data = builder.translate_freeform(raw)
+        resp_type = data.get("type")
+        allowed = builder.response_cfg.get(resp_type, {}).get("fields", [])
+        if resp_type != "text_response" and isinstance(data.get("data"), dict):
+            cleaned = {}
+            for key, value in data["data"].items():
+                if key in allowed:
+                    cleaned[key] = value
+                else:
+                    logging.info("Dropping unexpected key '%s' from %s", key, resp_type)
+            data["data"] = cleaned
+        return data
+
+    live_data = _parse(resp_live)
+    common_data = _parse(resp_common)
 
     if live_data and common_data:
         combined = {
             "type": "mixed_summary",
-            "data": {**live_data.get("data", {}), **common_data.get("data", {})},
+            "data": {
+                "live_data": live_data.get("data") if live_data.get("type") != "text_response" else {"message": live_data.get("message")},
+                "common_data": common_data.get("data") if common_data.get("type") != "text_response" else {"message": common_data.get("message")},
+            },
         }
         return json.dumps(combined)
+
     if live_data:
         return json.dumps(live_data)
     if common_data:
         return json.dumps(common_data)
+
     return json.dumps({"type": "text_response", "message": "No data"})
 
 # -------------------------
