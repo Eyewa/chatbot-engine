@@ -8,10 +8,10 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
-from agent import build_chatbot_agent
-from agent_router import _create_classifier_chain, _classify_query
+from agent.agent import build_chatbot_agent
+from agent.agent_router import _create_classifier_chain, _classify_query
 from langchain_openai import ChatOpenAI
-from chat_history_repository import ChatHistoryRepository
+from agent.chat_history_repository import ChatHistoryRepository
 
 # ------------------------
 # Request and Response Models
@@ -91,6 +91,10 @@ def create_app() -> FastAPI:
             content={"detail": "Oops! Something went wrong. Please try again later."}
         )
 
+    @app.get("/ping")
+    async def ping():
+        return {"status": "ok"}
+
     @app.post("/chat", response_model=ChatbotResponse, responses={500: {"model": ErrorResponse}})
     async def chat_endpoint(request: ChatbotRequest):
         try:
@@ -106,7 +110,7 @@ def create_app() -> FastAPI:
 
             logging.info("🧠 Processing input: %s", request.input)
             result = agent.invoke({"input": request.input, "chat_history": history})
-            logging.info("✅ Agent responded successfully")
+            logging.info("🔍 Raw agent result: %s", result)
             intent = _classify_query(request.input, classifier_chain)
 
             # Safely extract usable text

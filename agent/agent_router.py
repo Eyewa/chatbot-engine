@@ -59,7 +59,7 @@ def _classify_query(query: str, classifier_chain) -> str:
         return "both"
 
 def _build_agent(tools, system_message):
-    from prompt_builder import PromptBuilder
+    from agent.prompt_builder import PromptBuilder
 
     builder = PromptBuilder()
     full_prompt = builder.build_system_prompt() + "\n" + system_message

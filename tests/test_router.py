@@ -3,7 +3,7 @@ from unittest import mock
 
 import pytest
 
-import agent_router
+import agent.agent_router as agent_router
 
 
 class DummyChain:
