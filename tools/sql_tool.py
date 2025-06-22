@@ -191,7 +191,10 @@ def get_live_sql_tools():
                 _validate_query(query, schema_map)
                 return original(query)
 
-            tool.run = run
+            try:
+                tool.run = run
+            except Exception:
+                object.__setattr__(tool, "run", run)
         if tool.name == "sql_db_schema":
             original = tool.run
 
@@ -203,7 +206,10 @@ def get_live_sql_tools():
                 )
                 return json.dumps({n: schema_map.get(n, []) for n in names})
 
-            tool.run = schema_run
+            try:
+                tool.run = schema_run
+            except Exception:
+                object.__setattr__(tool, "run", schema_run)
     return _rename_tools(tools, "live")
 
 
@@ -238,7 +244,10 @@ def get_common_sql_tools():
                 _validate_query(query, schema_map)
                 return original(query)
 
-            tool.run = run
+            try:
+                tool.run = run
+            except Exception:
+                object.__setattr__(tool, "run", run)
         if tool.name == "sql_db_schema":
             original = tool.run
 
@@ -250,5 +259,8 @@ def get_common_sql_tools():
                 )
                 return json.dumps({n: schema_map.get(n, []) for n in names})
 
-            tool.run = schema_run
+            try:
+                tool.run = schema_run
+            except Exception:
+                object.__setattr__(tool, "run", schema_run)
     return _rename_tools(tools, "common")
