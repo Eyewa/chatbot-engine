@@ -153,6 +153,10 @@ def _combine_responses(resp_live, resp_common):
                 return match.group(0)
         return text
 
+    def filter_fields(d: dict, allowed_fields: set[str]) -> dict:
+        """Return dictionary with only allowed fields."""
+        return {k: v for k, v in d.items() if k in allowed_fields}
+
     def _parse(resp, allowed_fields: set[str]):
         if not resp:
             return None
@@ -161,14 +165,11 @@ def _combine_responses(resp_live, resp_common):
         data = builder.translate_freeform(cleaned_raw)
         resp_type = data.get("type")
         if resp_type != "text_response" and isinstance(data.get("data"), dict):
-            cleaned = {}
-            for key, value in data["data"].items():
-                if key in allowed_fields:
-                    cleaned[key] = value
-                else:
-                    logging.warning(
-                        "Dropping unexpected key '%s' from %s", key, resp_type
-                    )
+            original = data["data"]
+            cleaned = filter_fields(original, allowed_fields)
+            dropped = set(original) - set(cleaned)
+            for key in dropped:
+                logging.warning("Dropping unexpected key '%s' from %s", key, resp_type)
             data["data"] = cleaned
         return data
 

@@ -6,7 +6,7 @@ schema_version: 1.0
 tables:
   sales_order:
     description: Orders placed by customers. `increment_id` is usually referred to as the order number externally.
-    fields: [entity_id, increment_id, customer_id, grand_total, status, created_at]
+    fields: [entity_id, increment_id, grand_total, created_at]
     joins:
       - to_table: customer_entity
         from_field: customer_id
@@ -25,7 +25,7 @@ tables:
 
   customer_entity:
     description: Customer profile information.
-    fields: [entity_id, first_name, last_name, email, created_at]
+    fields: [entity_id, firstname, lastname, email]
     joins:
       - to_table: customer_loyalty_card  # 💡 Cross DB, conceptually allowed for lookup
         from_field: entity_id
@@ -45,9 +45,9 @@ tables:
   customer_loyalty_ledger:
     description: >
       Loyalty point transactions for each wallet or card. It records
-      points in `point_delta` with an optional `reason` and timestamp but
+      points in `points_delta` with an optional `reason` and timestamp but
       does not store any order or payment amounts.
-    fields: [entry_id, card_id, point_delta, reason, created_at, wallet_id]
+    fields: [entry_id, card_id, points_delta, reason, created_at, wallet_id]
     joins:
       - to_table: customer_wallet
         from_field: wallet_id

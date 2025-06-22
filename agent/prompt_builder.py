@@ -93,7 +93,7 @@ class PromptBuilder:
         )
         lines.append("⚠️ You must not hallucinate or guess column names.")
         lines.append(
-            "🛑 Do NOT use fields like 'loyalty_card' in eyewa_live — that belongs to eyewa_common."
+            "🛑 Do NOT use fields like 'loyalty_card', 'first_name', or 'point_delta' that are not listed above."
         )
 
         if db == "eyewa_common":
