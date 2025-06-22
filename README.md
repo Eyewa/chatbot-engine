@@ -10,7 +10,8 @@ This project provides a lightweight FastAPI service powered by LangChain and Lan
    ```
 2. Copy `.env.example` to `.env` and fill in your configuration values. The
    template includes placeholders for variables like `OPENAI_API_KEY`,
-   `SQL_DATABASE_URI_LIVE` and `SQL_DATABASE_URI_COMMON`.
+   `SQL_DATABASE_URI_LIVE`, `SQL_DATABASE_URI_COMMON` and
+   `SQL_DATABASE_URI_LIVE_WRITE`.
 3. Start the server:
    ```bash
    uvicorn main:app --reload
