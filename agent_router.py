@@ -1,31 +1,13 @@
-# agent_router.py
-
-"""Routing logic for Winkly chatbot.
-
-This module builds separate agents for the ``eyewa_live`` and
-``eyewa_common`` databases and routes user queries to the
-appropriate agent using an LLM-based intent classifier.
-"""
-
-import logging
-import re
-from typing import Dict, Any
-
 from langchain.agents import create_openai_functions_agent, AgentExecutor
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.runnables import (
-    RunnablePassthrough,
-    RunnableLambda,
-    RunnableBranch,
-)
+from langchain_core.runnables import RunnableBranch, RunnableLambda, RunnablePassthrough
 from langchain_openai import ChatOpenAI
+import logging
 
 from tools.sql_tool import get_live_sql_tools, get_common_sql_tools
 
-
-def _build_agent(tools, system_message: str) -> AgentExecutor:
-    """Helper to create a database-specific agent."""
+def _build_agent(tools, system_message):
     llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
     prompt = ChatPromptTemplate.from_messages([
         ("system", system_message),
@@ -36,33 +18,15 @@ def _build_agent(tools, system_message: str) -> AgentExecutor:
     agent = create_openai_functions_agent(llm=llm, tools=tools, prompt=prompt)
     return AgentExecutor(agent=agent, tools=tools, verbose=True)
 
-
-def _create_live_agent() -> AgentExecutor:
+def _create_live_agent():
     tools = get_live_sql_tools()
-    system_msg = (
-        "You are Winkly, an assistant with access to the 'eyewa_live' database. "
-        "Use the provided tools to query tables such as 'sales_order', "
-        "'customer_entity', and 'order_meta_data'. "
-        "Order information resides in `eyewa_live.sales_order` and should be "
-        "queried via `sql_db_query_live`. "
-        "Customer IDs correspond to the `entity_id` column in `customer_entity`."
-    )
-    return _build_agent(tools, system_msg)
+    return _build_agent(tools, "You are Winkly with access to eyewa_live DB including sales_order, customer_entity, order_meta_data, sales_order_payment.")
 
-
-def _create_common_agent() -> AgentExecutor:
+def _create_common_agent():
     tools = get_common_sql_tools()
-    system_msg = (
-        "You are Winkly, an assistant with access to the 'eyewa_common' database. "
-        "Use the provided tools to query tables such as 'customer_loyalty_card', "
-        "'sales_order_payment', and 'customer_loyalty_ledger'. "
-        "Loyalty card data is stored in `eyewa_common.customer_loyalty_card` "
-        "and is keyed by `customer_id`."
-    )
-    return _build_agent(tools, system_msg)
+    return _build_agent(tools, "You are Winkly with access to eyewa_common DB including customer_loyalty_card, customer_loyalty_ledger.")
 
-
-def _combine_responses(resp_live: Any, resp_common: Any) -> str:
+def _combine_responses(resp_live, resp_common):
     parts = []
     if resp_live:
         parts.append(str(getattr(resp_live, "content", resp_live)))
@@ -70,99 +34,46 @@ def _combine_responses(resp_live: Any, resp_common: Any) -> str:
         parts.append(str(getattr(resp_common, "content", resp_common)))
     return "\n".join(parts)
 
-
-def _extract_customer_id(query: str) -> str | None:
-    """Return a customer ID extracted from the query if present.
-
-    The function looks for numbers that are explicitly referenced as a
-    customer identifier, e.g. ``customer 123`` or ``customer_id=123``.
-    This avoids mistaking order numbers for customer IDs.
-    """
-
-    patterns = [
-        r"customer[_\s]?id\s*[:=]?\s*(\d{4,})",
-        r"customer\s+(\d{4,})",
-    ]
-    for pat in patterns:
-        match = re.search(pat, query, flags=re.IGNORECASE)
-        if match:
-            return match.group(1)
-    return None
-
-
-def _classify_query(query: str, classifier_chain) -> str:
-    """Return destination based on heuristic keywords and LLM classifier."""
-    lowered = query.lower()
-    if "loyalty" in lowered and ("order" in lowered or "purchase" in lowered):
-        logging.info("🏷️ Heuristic classification -> both")
-        return "both"
-    try:
-        dest = classifier_chain.invoke({"input": query}).strip().lower()
-        logging.info("🏷️ Classifier prediction: %s", dest)
-    except Exception as exc:  # pragma: no cover - log errors
-        logging.error("Classifier error: %s", exc)
-        dest = "both"
-    return dest
-
-
-def get_routed_agent() -> RunnableBranch:
-    """Return a runnable router that dispatches to the correct database agent."""
+def get_routed_agent():
     live_agent = _create_live_agent()
     common_agent = _create_common_agent()
 
     llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
     classifier_prompt = ChatPromptTemplate.from_messages([
-        (
-            "system",
-            "Decide whether the user question relates to the live order database or "
-            "the common loyalty database. Respond with one of: 'live', 'common', "
-            "or 'both'. If the question mentions order details together with loyalty "
-            "information, respond with 'both'.",
-        ),
+        ("system", """
+        You are an intent classifier for a chatbot that handles eyewear customer queries.
+        Determine the source of data needed for the query:
+        - If it concerns order details, customers, order_meta_data, sales_order_payment: respond \"live\"
+        - If it concerns loyalty cards, loyalty ledger: respond \"common\"
+        - If the query relates to both (e.g., orders + loyalty, customer + ledger), respond \"both\"
+        Respond only with: live, common, or both.
+        """),
         ("user", "{input}"),
     ])
     classifier_chain = classifier_prompt | llm | StrOutputParser()
 
-    def _classify(input_dict: Dict[str, Any]) -> str:
+    def _classify(input_dict):
         query = input_dict.get("input", "")
-        return _classify_query(query, classifier_chain)
-
-    def _handle_both(input_dict: Dict[str, Any]):
-        logging.info("🔀 Handling query across both databases")
-        query = input_dict.get("input", "")
-        customer_id = _extract_customer_id(query)
-        resp_live = None
-        resp_common = None
-
         try:
-            resp_live = live_agent.invoke(input_dict)
-        except Exception as exc:  # pragma: no cover
-            logging.error("Live agent error: %s", exc)
-            if "Unknown column" in str(exc):
-                logging.info("Retrying on common DB due to column error")
-                try:
-                    resp_common = common_agent.invoke(input_dict)
-                except Exception as exc2:
-                    logging.error("Common agent error: %s", exc2)
-                return _combine_responses(resp_live, resp_common)
+            intent = classifier_chain.invoke({"input": query}).strip().lower()
+            logging.info("🏷️ Classifier prediction: %s", intent)
+            return intent
+        except Exception as e:
+            logging.error("Classifier error: %s", e)
+            return "both"
 
-        common_input = dict(input_dict)
-        if customer_id:
-            common_input["input"] = f"loyalty card for customer {customer_id}"
-
+    def _handle_both(input_dict):
+        logging.info("🔀 Handling BOTH agent path")
         try:
-            resp_common = common_agent.invoke(common_input)
-        except Exception as exc:  # pragma: no cover
-            logging.error("Common agent error: %s", exc)
-            if "Unknown column" in str(exc) and not customer_id:
-                logging.info("Retrying common query with customer ID from live result failed")
-        return _combine_responses(resp_live, resp_common)
+            # Step 1: invoke live agent to extract order + customer data
+            live_resp = live_agent.invoke(input_dict)
 
-    def _handle_unknown(input_dict: Dict[str, Any]):
-        logging.warning(
-            "⚠️ Unknown intent '%s'. Falling back to both agents", input_dict.get("intent")
-        )
-        return _handle_both(input_dict)
+            # Step 2: invoke common agent with same query
+            common_resp = common_agent.invoke(input_dict)
+            return _combine_responses(live_resp, common_resp)
+        except Exception as e:
+            logging.error("_handle_both error: %s", e)
+            return "⚠️ There was an error fetching data from both sources."
 
     router = (
         RunnablePassthrough()
@@ -171,7 +82,8 @@ def get_routed_agent() -> RunnableBranch:
             (lambda x: x["intent"] == "live", live_agent),
             (lambda x: x["intent"] == "common", common_agent),
             (lambda x: x["intent"] == "both", RunnableLambda(_handle_both)),
-            RunnableLambda(_handle_unknown),
+            RunnableLambda(_handle_both),  # fallback
         )
     )
+
     return router
