@@ -141,3 +141,19 @@ def get_common_sql_tools():
     uri = os.getenv("SQL_DATABASE_URI_COMMON")
     allowed = ["customer_loyalty_card", "customer_loyalty_ledger", "customer_wallet"]
     return _create_sql_tools(uri, allowed, "common")
+
+
+def get_live_query_tool():
+    """Return the sql_db_query tool for the live DB or None."""
+    for tool in get_live_sql_tools():
+        if tool.name.startswith("sql_db_query"):
+            return tool
+    return None
+
+
+def get_common_query_tool():
+    """Return the sql_db_query tool for the common DB or None."""
+    for tool in get_common_sql_tools():
+        if tool.name.startswith("sql_db_query"):
+            return tool
+    return None
