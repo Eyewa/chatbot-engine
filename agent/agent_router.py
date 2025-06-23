@@ -3,31 +3,28 @@
 import json
 import logging
 import re
-from typing import Optional
+from typing import Optional, Any
+import os
 
+LANGCHAIN_AVAILABLE = False
 try:
-    from langchain.agents import create_openai_functions_agent, AgentExecutor
-    from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-    from langchain_core.output_parsers import StrOutputParser
+    from langchain.agents import create_openai_functions_agent, AgentExecutor  # type: ignore
+    from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder  # type: ignore
+    from langchain_core.output_parsers import StrOutputParser  # type: ignore
     from langchain_core.runnables import (
-        RunnableBranch,
-        RunnableLambda,
-        RunnablePassthrough,
+        RunnableBranch,  # type: ignore
+        RunnableLambda,  # type: ignore
+        RunnablePassthrough,  # type: ignore
     )
-    from langchain_openai import ChatOpenAI
-
+    from langchain_openai import ChatOpenAI  # type: ignore
+    from sentence_transformers import SentenceTransformer, util
     LANGCHAIN_AVAILABLE = True
 except Exception:
-    LANGCHAIN_AVAILABLE = False
-
-    class RunnableLambda:
+    class RunnableLambda:  # type: ignore
         def __init__(self, func):
             self.func = func
 
-        def invoke(self, input_dict):
-            return self.func(input_dict)
-
-    class AgentExecutor:
+    class AgentExecutor:  # type: ignore
         def __init__(self, agent=None, tools=None, verbose=False):
             self.agent = agent
 
@@ -36,7 +33,7 @@ except Exception:
                 return self.agent(input_dict)
             return None
 
-    def ChatOpenAI(*args, **kwargs):
+    def ChatOpenAI(*args, **kwargs):  # type: ignore
         raise ModuleNotFoundError("LangChain not installed")
 
 
@@ -69,15 +66,56 @@ def _classify_query(query: str, classifier_chain) -> str:
 # -------------------------
 
 
+def load_join_examples(path="config/join_examples.json"):
+    if not os.path.exists(path):
+        return []
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def find_relevant_examples(allowed_tables, examples, user_query=None, top_k=2):
+    # Try semantic search if possible
+    if user_query:
+        try:
+            query_emb = SentenceTransformer('all-MiniLM-L6-v2').encode(user_query, convert_to_tensor=True)
+            example_texts = [ex['description'] + ' ' + ex['example'] for ex in examples]
+            example_embs = SentenceTransformer('all-MiniLM-L6-v2').encode(example_texts, convert_to_tensor=True)
+            similarities = util.pytorch_cos_sim(query_emb, example_embs)[0]
+            top_indices = similarities.argsort(descending=True)[:top_k]
+            return [examples[i]['example'] for i in top_indices]
+        except Exception as e:
+            logging.warning(f"Semantic search failed, falling back to tag match: {e}")
+    # Fallback: tag-based match
+    scored = []
+    allowed = set([t.lower() for t in allowed_tables])
+    for ex in examples:
+        score = sum(1 for tag in ex["tags"] if tag in allowed)
+        if score > 0:
+            scored.append((score, ex))
+    scored.sort(reverse=True)
+    return [ex["example"] for _, ex in scored[:top_k]]
+
+
 def _build_agent(
     tools, db_key: str, allowed_tables: list[str], max_iterations: int = 5
 ):
     builder = PromptBuilder()
+    # Load and inject only relevant join examples
+    join_examples = load_join_examples()
+    # Try to get user_query from context if available (for semantic search)
+    import inspect
+    user_query = None
+    frame = inspect.currentframe()
+    if frame is not None and frame.f_back is not None:
+        parent_locals = frame.f_back.f_locals
+        if parent_locals and 'input_dict' in parent_locals:
+            user_query = parent_locals['input_dict'].get('input')
+    relevant_examples = find_relevant_examples(allowed_tables, join_examples, user_query=user_query)
     system_prompt = builder.build_system_prompt(
-        db=db_key, allowed_tables=allowed_tables
+        db=db_key, allowed_tables=allowed_tables, extra_examples=relevant_examples
     )
 
-    llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
+    llm = ChatOpenAI(model="gpt-4o", temperature=0)
     prompt = ChatPromptTemplate.from_messages(
         [
             ("system", system_prompt),
@@ -88,7 +126,7 @@ def _build_agent(
     )
     agent = create_openai_functions_agent(llm=llm, tools=tools, prompt=prompt)
     return AgentExecutor(
-        agent=agent, tools=tools, verbose=True, max_iterations=max_iterations
+        agent=agent, tools=tools, verbose=True
     )
 
 
@@ -113,92 +151,76 @@ def _create_common_agent():
     )
 
 
-def _combine_responses(resp_live, resp_common):
-    """Merge two agent responses with schema validation and namespacing."""
+def clean_agent_output(output):
+    if not output:
+        return None
+    # Remove triple backticks and language tag
+    if isinstance(output, str):
+        match = re.search(r"```(?:json)?\\n?(.*?)```", output, re.DOTALL)
+        if match:
+            output = match.group(1).strip()
+        # Try to parse as JSON
+        try:
+            return json.loads(output)
+        except Exception:
+            pass
+    # If already dict/list, return as is
+    if isinstance(output, (dict, list)):
+        return output
+    return output
 
+
+def deep_clean_json_blocks(obj):
+    # Recursively clean and parse all string values, including repeated code block unwrapping
+    if isinstance(obj, str):
+        prev = obj
+        cleaned = clean_agent_output(prev)
+        # If cleaning returns a string, try again (handle nested code blocks)
+        while isinstance(cleaned, str) and cleaned != prev:
+            prev = cleaned
+            cleaned = clean_agent_output(prev)
+        return cleaned
+    elif isinstance(obj, dict):
+        return {k: deep_clean_json_blocks(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [deep_clean_json_blocks(v) for v in obj]
+    else:
+        return obj
+
+
+def _combine_responses(resp_live, resp_common):
+    """Robustly merge two agent responses. Return any real data, or a generic message if both are empty."""
     builder = PromptBuilder()
 
-    # Build allowed field sets per agent based on schema
-    def _fields_for_tables(tables: list[str]) -> set[str]:
-        fields = set()
-        for t in tables:
-            fields.update(
-                builder.schema_cfg.get("tables", {}).get(t, {}).get("fields", [])
-            )
-        return fields
-
-    live_tables = [
-        "sales_order",
-        "customer_entity",
-        "order_meta_data",
-        "sales_order_address",
-        "sales_order_payment",
-    ]
-    common_tables = [
-        "customer_loyalty_card",
-        "customer_loyalty_ledger",
-        "customer_wallet",
-    ]
-    live_allowed = _fields_for_tables(live_tables)
-    common_allowed = _fields_for_tables(common_tables)
-
-    def _extract_json_blob(text: str) -> str:
-        """Return the first valid JSON object found in text."""
-        try:
-            json.loads(text)
-            return text
-        except Exception:
-            match = re.search(r"\{.*\}", text, re.DOTALL)
-            if match:
-                return match.group(0)
-        return text
-
-    def filter_fields(d: dict, allowed_fields: set[str]) -> dict:
-        """Return dictionary with only allowed fields."""
-        return {k: v for k, v in d.items() if k in allowed_fields}
-
-    def _parse(resp, allowed_fields: set[str]):
+    def _parse(resp):
         if not resp:
             return None
-        raw = str(getattr(resp, "content", resp))
-        cleaned_raw = _extract_json_blob(raw)
-        data = builder.translate_freeform(cleaned_raw)
-        resp_type = data.get("type")
-        payload = data.get("data")
-        if payload is None and isinstance(data, dict):
-            payload = {k: v for k, v in data.items() if k != "type"}
-        if resp_type != "text_response" and isinstance(payload, dict):
-            cleaned = filter_fields(payload, allowed_fields)
-            dropped = set(payload) - set(cleaned)
-            for key in dropped:
-                logging.warning("Dropping unexpected key '%s' from %s", key, resp_type)
-            return {"type": resp_type, "data": cleaned}
-        return data
+        # If it's a dict with 'output', clean it
+        if isinstance(resp, dict) and 'output' in resp:
+            return clean_agent_output(resp['output'])
+        # If it's a string, try to clean and parse
+        if isinstance(resp, str):
+            return clean_agent_output(resp)
+        # If already dict/list, return as is
+        if isinstance(resp, (dict, list)):
+            return resp
+        return None
 
-    live_data = _parse(resp_live, live_allowed)
-    common_data = _parse(resp_common, common_allowed)
+    live_data = _parse(resp_live)
+    common_data = _parse(resp_common)
 
-    merged = {
-        "type": "mixed_summary",
-        "data": {"orders": None, "loyalty_card": None},
-    }
-
-    if live_data and live_data.get("type") != "text_response" and live_data.get("data"):
-        merged["data"]["orders"] = live_data["data"]
-
-    if (
-        common_data
-        and common_data.get("type") != "text_response"
-        and common_data.get("data")
-    ):
-        merged["data"]["loyalty_card"] = common_data["data"]
-
-    if merged["data"]["orders"] is not None or merged["data"]["loyalty_card"] is not None:
-        return json.dumps(merged)
-
-    return json.dumps(
-        {"type": "text_response", "message": "No data found from either source"}
-    )
+    # If both are empty or None
+    if not live_data and not common_data:
+        return {"type": "text_response", "message": "No data found from either source"}
+    # If only live has data
+    if live_data and not common_data:
+        return deep_clean_json_blocks(live_data)
+    # If only common has data
+    if common_data and not live_data:
+        return deep_clean_json_blocks(common_data)
+    # If both have data, return both in a dict
+    merged = {"live": live_data, "common": common_data}
+    return deep_clean_json_blocks(merged)
 
 
 # -------------------------
@@ -270,7 +292,7 @@ def _create_classifier_chain():
 
         return Dummy()
 
-    llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
+    llm = ChatOpenAI(model="gpt-4o", temperature=0)
     prompt = ChatPromptTemplate.from_messages(
         [
             (
@@ -316,12 +338,12 @@ def get_routed_agent():
         return SimpleRouter()
 
     router = RunnablePassthrough().assign(
-        intent=RunnableLambda(_classify)
+        intent=RunnableLambda(_classify)  # type: ignore
     ) | RunnableBranch(
-        (lambda x: x["intent"] == "live", live_agent),
-        (lambda x: x["intent"] == "common", common_agent),
-        (lambda x: x["intent"] == "both", RunnableLambda(_handle_both)),
-        RunnableLambda(_handle_both),
-    )
+        (lambda x: x["intent"] == "live", live_agent),  # type: ignore
+        (lambda x: x["intent"] == "common", common_agent),  # type: ignore
+        (lambda x: x["intent"] == "both", RunnableLambda(_handle_both)),  # type: ignore
+        RunnableLambda(_handle_both),  # type: ignore  # default branch, not a tuple!
+    )  # type: ignore
 
     return router

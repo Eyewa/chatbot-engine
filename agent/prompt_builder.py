@@ -44,11 +44,12 @@ class PromptBuilder:
             return {}
 
     def build_system_prompt(
-        self, db: str = "", allowed_tables: Optional[List[str]] = None
+        self, db: str = "", allowed_tables: Optional[List[str]] = None, extra_examples: Optional[list] = None
     ) -> str:
         types = ", ".join(self.response_cfg.keys())
         lines = [
-            "You are Winkly — an intelligent, structured response assistant.",
+            "You are Winkly — an intelligent, structured response assistant for customer and order data.",
+            "You answer questions about orders, customers, loyalty cards, and wallets using only the provided database schema.",
             f"Always respond using JSON with a top-level 'type'. Valid types are: {types}.",
         ]
         if allowed_tables:
@@ -76,6 +77,12 @@ class PromptBuilder:
         lines.append(
             "⚠️ Tables with `_live` and `_common` suffixes belong to separate databases. Never join across them."
         )
+
+        # Dynamically add relevant join examples if provided
+        if extra_examples:
+            lines.append("Relevant SQL join example(s):")
+            for ex in extra_examples:
+                lines.append(ex)
 
         join_lines = []
         for table, meta in self.schema_cfg.get("tables", {}).items():

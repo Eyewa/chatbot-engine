@@ -1,0 +1,17 @@
+[
+  {
+    "tags": ["loyalty", "card", "ledger"],
+    "description": "Join loyalty card, wallet, and ledger for a customer. Always use LEFT JOIN for the ledger table so card and wallet info is returned even if there are no ledger entries. Use unique aliases for each table in a join (e.g., clc, cw, cll). Only join on columns that exist in the schema. Do NOT select or join on columns that do not exist in the schema. For example, customer_loyalty_ledger does not have a customer_id column, and customer_loyalty_card does not have a wallet_id column. Never select or join on customer_id from customer_loyalty_ledger, or wallet_id from customer_loyalty_card.",
+    "example": "SELECT clc.card_number, clc.customer_id, clc.start_date, clc.status, cw.entity_id AS wallet_id, cll.amount, cll.order_id\nFROM customer_loyalty_card AS clc\nJOIN customer_wallet AS cw ON clc.customer_id = cw.customer_id\nLEFT JOIN customer_loyalty_ledger AS cll ON cw.entity_id = cll.wallet_id\nWHERE clc.customer_id = <customer_id>\nORDER BY cll.created_at DESC\nLIMIT 2;"
+  },
+  {
+    "tags": ["loyalty", "card", "wallet"],
+    "description": "Fetch only loyalty card and wallet info for a customer (no ledger). Do NOT select or join on columns that do not exist in the schema.",
+    "example": "SELECT clc.card_number, clc.customer_id, clc.start_date, clc.status, cw.entity_id AS wallet_id\nFROM customer_loyalty_card AS clc\nJOIN customer_wallet AS cw ON clc.customer_id = cw.customer_id\nWHERE clc.customer_id = <customer_id>;"
+  },
+  {
+    "tags": ["order", "payment"],
+    "description": "Join sales_order and sales_order_payment",
+    "example": "SELECT so.entity_id, sop.amount_paid\nFROM sales_order so\nJOIN sales_order_payment sop ON so.entity_id = sop.parent_id\nWHERE so.customer_id = <customer_id>;"
+  }
+] 

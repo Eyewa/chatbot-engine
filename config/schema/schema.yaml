@@ -64,24 +64,28 @@ tables:
         to_field: entity_id
 
   customer_loyalty_card:
-    description: Loyalty program cards linked to customers.
-    fields: [entity_id,customer_id, store_code, card_number, start_date, status, blocked_date, created_at, updated_at]
+    description: "Loyalty cards issued to customers. Each card is linked to a customer."
+    fields: [entity_id, customer_id, store_code, card_number, start_date, status, metadata, blocked_date, created_at, updated_at]
     joins:
       - to_table: customer_entity
         from_field: customer_id
         to_field: entity_id
-  
+      - to_table: customer_wallet
+        from_field: customer_id
+        to_field: customer_id
+        description: "A loyalty card's customer_id matches customer_wallet.customer_id. Use this to join to the wallet."
 
   customer_loyalty_ledger:
-    description: Loyalty point transactions per wallet/card.
-    fields: [entity_id, wallet_id, amount, available_amount, status, ledger_type, action, start_time, expiration_time, txn_id, external_txn_id, external_sales_id, order_id, external_rec_id, otc_order, default_loyalty, reason, created_at, updated_at]
+    description: "Ledger of loyalty transactions for each wallet. Each entry is linked to a wallet via wallet_id."
+    fields: [entity_id, wallet_id, amount, available_amount, status, ledger_type, action, start_time, expiration_time, txn_id, external_txn_id, external_sales_id, order_id, external_rec_id, otc_order, default_loyalty, metadata, reason, created_at, updated_at]
     joins:
       - to_table: customer_wallet
         from_field: wallet_id
         to_field: entity_id
+        description: "Each ledger entry is for a specific wallet. Join on wallet_id = customer_wallet.entity_id."
 
   customer_wallet:
-    description: Wallets linked to customer accounts.
+    description: "Wallets for customers, holding balances and linked to loyalty ledgers. Each wallet belongs to a customer."
     customInfo: "customer_id joins to customer_entity"
     fields: [entity_id, customer_id, store_code, status, customer_balance, cashback_balance, created_at, updated_at, loyalty_balance, next_loyalty_expiry, credits_balance]
     joins:
@@ -91,6 +95,7 @@ tables:
       - to_table: customer_loyalty_ledger
         from_field: entity_id
         to_field: wallet_id
+        description: "A wallet's entity_id is used as wallet_id in customer_loyalty_ledger."
       - to_table: customer_credits_ledger
         from_field: entity_id
         to_field: wallet_id

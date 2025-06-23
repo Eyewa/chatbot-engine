@@ -54,19 +54,21 @@ class ChatHistoryRepository:
                 },
             )
 
-    def fetch_history(self, conversation_id: str) -> List[str]:
+    def fetch_history(self, conversation_id: str, limit: Optional[int] = None) -> List[str]:
         """Return chat history as a list alternating user and assistant messages."""
+        query = """
+            SELECT user_input, agent_output
+            FROM chatbot_engine_query_logs
+            WHERE conversation_id = :conversation_id
+            ORDER BY id ASC
+        """
+        params = {"conversation_id": conversation_id}
+        if limit is not None:
+            query += f" LIMIT {int(limit)}"
         with self.engine.connect() as conn:
             result = conn.execute(
-                text(
-                    """
-                    SELECT user_input, agent_output
-                    FROM chatbot_engine_query_logs
-                    WHERE conversation_id = :conversation_id
-                    ORDER BY id ASC
-                    """
-                ),
-                {"conversation_id": conversation_id},
+                text(query),
+                params,
             ).mappings()  # 👈 This makes each row accessible by column name
 
             history: List[str] = []
