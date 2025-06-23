@@ -82,7 +82,7 @@ def classify(query: str) -> Dict[str, object]:
                 ]
             )
             parser = JsonOutputParser()
-            chain: Runnable = prompt | ChatOpenAI(model="gpt-3.5-turbo", temperature=0) | parser
+            chain = prompt | ChatOpenAI(model="gpt-3.5-turbo", temperature=0) | parser
             resp = chain.invoke({"input": query})
             if isinstance(resp, dict) and "intent" in resp:
                 return resp

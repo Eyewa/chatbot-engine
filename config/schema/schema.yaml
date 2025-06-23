@@ -65,7 +65,7 @@ tables:
 
   customer_loyalty_card:
     description: Loyalty program cards linked to customers.
-    fields: [entity_id, wallet_id,customer_id, store_code, card_number, start_date, status, blocked_date, created_at, updated_at]
+    fields: [entity_id,customer_id, store_code, card_number, start_date, status, blocked_date, created_at, updated_at]
     joins:
       - to_table: customer_entity
         from_field: customer_id
