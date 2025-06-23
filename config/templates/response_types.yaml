@@ -22,8 +22,8 @@ customer_profile:
 
 mixed_summary:
   fields:
-    - orders
-    - loyalty
+    - orders_summary
+    - loyalty_summary
 
 text_response:
   fields:
