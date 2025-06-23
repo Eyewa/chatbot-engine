@@ -2,6 +2,7 @@ import json
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+import ast
 
 try:
     import yaml  # type: ignore
@@ -72,7 +73,6 @@ class PromptBuilder:
         else:
             allowed_tables = []
 
-        # Prevent cross-database join hallucination
         lines.append(
             "⚠️ Tables with `_live` and `_common` suffixes belong to separate databases. Never join across them."
         )
@@ -90,7 +90,6 @@ class PromptBuilder:
             lines.append("Use these known joins when needed:")
             lines.extend(join_lines)
 
-        # Anti-hallucination
         lines.append(
             "🚫 Do NOT hallucinate tables or fields. Only query the tables and columns listed above."
         )
@@ -112,12 +111,20 @@ class PromptBuilder:
                 "SELECT card_number FROM customer_loyalty_card WHERE customer_id = <ID>;"
             )
 
+        lines.append("Final Tip: Add Debug Logging to Output Before Parsing")
+        lines.append(
+            "You must ALWAYS respond with a valid JSON using double quotes. Do not use single quotes."
+        )
+        lines.append(
+            "Ensure your output matches one of the expected response_types formats (e.g., \"type\": \"loyalty_summary\")."
+        )
+        lines.append("Never return raw SQL tables or prose.")
+
         return "\n".join(lines)
 
     def build_custom_table_info(
         self, allowed_tables: Optional[List[str]] = None
     ) -> Dict[str, str]:
-        """Return LangChain-compatible table info for allowed tables only."""
         info = {}
         for table, meta in self.schema_cfg.get("tables", {}).items():
             if allowed_tables and table not in allowed_tables:
@@ -141,12 +148,31 @@ class PromptBuilder:
         return info
 
     def translate_freeform(self, text: str) -> Dict[str, Any]:
+        logging.debug(f"📦 Attempting to parse response: {text!r}")
+
+        # Try JSON directly
         try:
             data = json.loads(text)
             if isinstance(data, dict) and data.get("type") in self.response_cfg:
                 return data
-        except Exception:
-            pass
+        except json.JSONDecodeError as e:
+            logging.warning(f"⚠️ Direct JSON parse failed: {e}")
+
+        # Try parsing as Python dict literal
+        try:
+            parsed = ast.literal_eval(text)
+            if isinstance(parsed, dict) and "output" in parsed:
+                inner = parsed["output"]
+                if isinstance(inner, str):
+                    try:
+                        json_data = json.loads(inner)
+                        if json_data.get("type") in self.response_cfg:
+                            return json_data
+                    except Exception as inner_e:
+                        logging.error(f"❌ Failed to parse inner output: {inner_e}")
+        except Exception as e2:
+            logging.error(f"❌ literal_eval failed: {e2}")
+
         return {"type": "text_response", "message": text.strip()}
 
     def assert_valid_schema(self):
