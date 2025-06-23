@@ -122,11 +122,26 @@ def _validate_query(query: str | dict, schema_map: Dict[str, List[str]]) -> None
         table = alias_map.get(alias, alias)
         fields = schema_map.get(table)
         if fields is None:
-            logging.warning(f"⚠️ Unknown table or alias: '{table}' (from alias '{alias}')")
+            logging.warning(
+                f"⚠️ Unknown table or alias: '{table}' (from alias '{alias}')"
+            )
             continue  # Optionally raise here if strict
         if column not in fields:
-            logging.warning(f"🛑 Invalid column '{column}' in table '{table}' — allowed: {fields}")
+            logging.warning(
+                f"🛑 Invalid column '{column}' in table '{table}' — allowed: {fields}"
+            )
             raise ValueError(f"Invalid column: {table}.{column}")
+
+
+def extract_table_names(sql: str) -> List[str]:
+    """Return a list of table names referenced in the SQL query."""
+    names: List[str] = []
+    pattern = re.compile(r"\b(?:from|join)\s+([a-zA-Z_][\w]*)", re.IGNORECASE)
+    for match in pattern.finditer(sql):
+        table = match.group(1)
+        if table not in names:
+            names.append(table)
+    return names
 
 
 # ------------------------------------------

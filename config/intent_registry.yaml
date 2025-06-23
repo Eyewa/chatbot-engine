@@ -1,0 +1,85 @@
+order:
+  recent_orders:
+    table: sales_order
+    fields: [entity_id, created_at, increment_id]
+    db: live
+  order_amount:
+    table: sales_order
+    fields: [entity_id, grand_total]
+    db: live
+  order_status:
+    table: sales_order
+    fields: [entity_id, status]
+    db: live
+  order_items:
+    table: sales_order_item
+    fields: [order_id, name, qty_ordered]
+    db: live
+  order_date:
+    table: sales_order
+    fields: [entity_id, created_at]
+    db: live
+payment:
+  amount_paid:
+    table: sales_order_payment
+    fields: [parent_id, amount_paid]
+    db: live
+  payment_method:
+    table: sales_order_payment
+    fields: [parent_id, method]
+    db: live
+  payment_status:
+    table: sales_order_payment
+    fields: [parent_id, payment_status]
+    db: live
+loyalty:
+  card_number:
+    table: customer_loyalty_card
+    fields: [card_number, customer_id]
+    db: common
+  balance:
+    table: customer_wallet
+    fields: [loyalty_balance, customer_id]
+    db: common
+  ledger_history:
+    table: customer_loyalty_ledger
+    fields: [wallet_id, amount, created_at]
+    db: common
+  expiry:
+    table: customer_wallet
+    fields: [next_loyalty_expiry, customer_id]
+    db: common
+customer_profile:
+  name:
+    table: customer_entity
+    fields: [firstname, lastname]
+    db: live
+  email:
+    table: customer_entity
+    fields: [email]
+    db: live
+  mobile:
+    table: customer_entity
+    fields: [mobile_number]
+    db: live
+  id:
+    table: customer_entity
+    fields: [entity_id]
+    db: live
+address:
+  shipping_address:
+    table: sales_order_address
+    fields: [parent_id, street]
+    db: live
+  billing_address:
+    table: sales_order_address
+    fields: [parent_id, street]
+    db: live
+  city:
+    table: sales_order_address
+    fields: [parent_id, city]
+    db: live
+  phone:
+    table: sales_order_address
+    fields: [parent_id, telephone]
+    db: live
