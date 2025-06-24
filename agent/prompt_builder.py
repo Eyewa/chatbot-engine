@@ -71,6 +71,10 @@ class PromptBuilder:
                     "You are only allowed to use the following tables and fields:"
                 )
                 lines.extend(table_info)
+            # Explicit order_id/increment_id instructions
+            lines.append("")
+            lines.append("For all order history queries, always use sales_order.increment_id as the order ID. Do not use customer_loyalty_ledger.order_id unless the user specifically asks for loyalty transactions. If you need order details for a loyalty transaction, join customer_loyalty_ledger.order_id to sales_order.increment_id.")
+            lines.append("If the user only asks for loyalty card details, do not join the ledger table. Only join the ledger if the user asks for loyalty transactions or history.")
         else:
             allowed_tables = []
 

@@ -1,24 +1,18 @@
 orders_summary:
   fields:
-    - increment_id
-    - amount
-    - status
+    - orders
 
 loyalty_summary:
   fields:
     - card_number
+    - activation_date
+    - expiry_date
+    - status
 
-customer_profile:
+wallet_summary:
   fields:
-    - entity_id
-    - email
-    - first_name
-
-mixed_summary:
-  fields:
-    - orders
-    - loyalty_card
-    - customer
+    - loyalty_points
+    - credits_points
 
 text_response:
   fields:

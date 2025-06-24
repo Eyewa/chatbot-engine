@@ -43,12 +43,9 @@ def filter_response_by_type(response_json: dict) -> dict:
         return response_json
     allowed_fields = RESPONSE_TYPES[response_type].get("fields", [])
     filtered = {"type": response_type}
-    data = response_json.get("data", {})
-    # Always include allowed fields from both top-level and data
     for key in allowed_fields:
-        if key in data:
-            filtered[key] = data[key]
-        elif key in response_json:
+        # Always include the field if present, even if it's an empty list or None
+        if key in response_json:
             filtered[key] = response_json[key]
     return filtered
 
@@ -139,6 +136,46 @@ def merge_outputs(live, common):
     if "type" not in merged or not isinstance(merged["type"], str) or not merged["type"]:
         merged["type"] = "text_response"
     return filter_response_by_type(merged)
+
+def unwrap_message_dicts(obj):
+    if isinstance(obj, dict):
+        # If the dict is exactly {'message': value}, unwrap it
+        if set(obj.keys()) == {"message"}:
+            return unwrap_message_dicts(obj["message"])
+        # Otherwise, recursively unwrap all values
+        return {k: unwrap_message_dicts(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [unwrap_message_dicts(v) for v in obj]
+    else:
+        return obj
+
+def flatten_orders_field(obj):
+    if isinstance(obj, dict) and "orders" in obj:
+        orders_val = obj["orders"]
+        if isinstance(orders_val, dict) and "data" in orders_val:
+            obj["orders"] = orders_val["data"]
+    return obj
+
+def flatten_allowed_fields(obj, allowed_fields):
+    """
+    Recursively flatten any nested dicts whose keys are in allowed_fields.
+    Promotes fields from nested dicts to the top level if they match allowed_fields.
+    """
+    if not isinstance(obj, dict):
+        return obj
+    flat = {}
+    for k, v in obj.items():
+        if isinstance(v, dict):
+            # If any keys in v are in allowed_fields, promote them
+            for subk, subv in v.items():
+                if subk in allowed_fields:
+                    flat[subk] = flatten_allowed_fields(subv, allowed_fields)
+            # Also keep the original key if it's allowed and not already set
+            if k in allowed_fields and k not in flat:
+                flat[k] = flatten_allowed_fields(v, allowed_fields)
+        else:
+            flat[k] = v
+    return flat
 
 # ------------------------
 # Request and Response Models
@@ -289,8 +326,17 @@ def create_app() -> FastAPI:
                 logging.info("[DEBUG-CHAT] Added message to text_response: %s", merged)
 
             # 3) drop any keys not in that schema
+            merged = flatten_orders_field(merged)
+            logging.info("[DEBUG-CHAT] After flatten_orders_field: %s", merged)
+            allowed_fields = set(RESPONSE_TYPES.get(merged.get("type"), {}).get("fields", []))
+            merged = flatten_allowed_fields(merged, allowed_fields)
+            logging.info("[DEBUG-CHAT] After flatten_allowed_fields: %s", merged)
             final = filter_response_by_type(merged)
             logging.info("[DEBUG-CHAT] Final filtered response: %s", final)
+
+            # Unwrap message dictionaries
+            final = unwrap_message_dicts(final)
+            logging.info("[DEBUG-CHAT] Final unwrapped response: %s", final)
 
             # Save to history
             try:

@@ -13,5 +13,10 @@
     "tags": ["order", "payment"],
     "description": "Join sales_order and sales_order_payment",
     "example": "SELECT so.entity_id, sop.amount_paid\nFROM sales_order so\nJOIN sales_order_payment sop ON so.entity_id = sop.parent_id\nWHERE so.customer_id = <customer_id>;"
+  },
+  {
+    "tags": ["loyalty", "ledger", "order", "join"],
+    "description": "Join customer_loyalty_ledger to sales_order using order_id and increment_id. Note: customer_loyalty_ledger.order_id refers to sales_order.increment_id (the public order number, not entity_id). Use this join to fetch order details for loyalty transactions.",
+    "example": "SELECT cll.amount, cll.order_id, so.grand_total, so.created_at\nFROM customer_loyalty_ledger AS cll\nJOIN sales_order AS so ON cll.order_id = so.increment_id\nWHERE cll.wallet_id = <wallet_id>\nORDER BY cll.created_at DESC\nLIMIT 2;"
   }
 ] 

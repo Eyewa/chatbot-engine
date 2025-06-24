@@ -76,13 +76,17 @@ tables:
         description: "A loyalty card's customer_id matches customer_wallet.customer_id. Use this to join to the wallet."
 
   customer_loyalty_ledger:
-    description: "Ledger of loyalty transactions for each wallet. Each entry is linked to a wallet via wallet_id."
+    description: "Ledger of loyalty transactions for each wallet. Each entry is linked to a wallet via wallet_id. The order_id field refers to sales_order.increment_id (the public order number, not entity_id)."
     fields: [entity_id, wallet_id, amount, available_amount, status, ledger_type, action, start_time, expiration_time, txn_id, external_txn_id, external_sales_id, order_id, external_rec_id, otc_order, default_loyalty, metadata, reason, created_at, updated_at]
     joins:
       - to_table: customer_wallet
         from_field: wallet_id
         to_field: entity_id
         description: "Each ledger entry is for a specific wallet. Join on wallet_id = customer_wallet.entity_id."
+      - to_table: sales_order
+        from_field: order_id
+        to_field: increment_id
+        description: "Join to sales_order.increment_id (public order number) for order details."
 
   customer_wallet:
     description: "Wallets for customers, holding balances and linked to loyalty ledgers. Each wallet belongs to a customer."
