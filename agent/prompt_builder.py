@@ -48,89 +48,46 @@ class PromptBuilder:
     ) -> str:
         types = ", ".join(self.response_cfg.keys())
         lines = [
-            "You are Winkly — an intelligent, structured response assistant for customer and order data.",
-            "You answer questions about orders, customers, loyalty cards, and wallets using only the provided database schema.",
-            f"Always respond using JSON with a top-level 'type'. Valid types are: {types}.",
+            "You are Winkly, a structured data assistant for customer and order data. Use only the schema and rules below.",
+            "Rules:",
+            "- Use only the tables and fields listed below. Never invent or guess columns, tables, or values.",
+            "- For order history, use sales_order.increment_id as the order ID. Only use customer_loyalty_ledger.order_id for loyalty transactions, and join to sales_order.increment_id if order details are needed.",
+            "- If only loyalty card details are needed, do not join the ledger table.",
+            "- Never join across _live and _common databases.",
+            "- Do NOT hallucinate tables, fields, or values. Only use what is listed.",
+            "- Always return valid JSON with double quotes. No code blocks, no SQL, no prose.",
+            "- Output must match one of the allowed response_types. Top-level key must be 'type'.",
+            f"- Valid types: {types}.",
         ]
         if allowed_tables:
-            lines.append(
-                f"You are using the `{db}` database with access to: {', '.join(allowed_tables)}."
-            )
+            lines.append(f"Database: `{db}`. Allowed tables: {', '.join(allowed_tables)}.")
             table_info = []
             for table in allowed_tables:
                 meta = self.schema_cfg.get("tables", {}).get(table, {})
                 custom = meta.get("customInfo")
                 if custom:
-                    table_info.append(f"- Table `{table}`: {custom}")
+                    table_info.append(f"- `{table}`: {custom}")
                 else:
                     fields = meta.get("fields", [])
                     field_list = ", ".join(fields)
-                    table_info.append(f"- Table `{table}`: {field_list}")
+                    table_info.append(f"- `{table}`: {field_list}")
             if table_info:
-                lines.append(
-                    "You are only allowed to use the following tables and fields:"
-                )
+                lines.append("Allowed tables and fields:")
                 lines.extend(table_info)
-            # Explicit order_id/increment_id instructions
-            lines.append("")
-            lines.append("For all order history queries, always use sales_order.increment_id as the order ID. Do not use customer_loyalty_ledger.order_id unless the user specifically asks for loyalty transactions. If you need order details for a loyalty transaction, join customer_loyalty_ledger.order_id to sales_order.increment_id.")
-            lines.append("If the user only asks for loyalty card details, do not join the ledger table. Only join the ledger if the user asks for loyalty transactions or history.")
-        else:
-            allowed_tables = []
-
-        lines.append(
-            "⚠️ Tables with `_live` and `_common` suffixes belong to separate databases. Never join across them."
-        )
-
-        # Dynamically add relevant join examples if provided
-        if extra_examples:
-            lines.append("Relevant SQL join example(s):")
-            for ex in extra_examples:
-                lines.append(ex)
-
+        # Add a single, clear join example if available
+        if extra_examples and len(extra_examples) > 0:
+            lines.append("Example join:")
+            lines.append(extra_examples[0])
         join_lines = []
         for table, meta in self.schema_cfg.get("tables", {}).items():
             if allowed_tables and table not in allowed_tables:
                 continue
             for join in meta.get("joins", []):
                 if join.get("to_table") in allowed_tables:
-                    join_lines.append(
-                        f"{table}.{join['from_field']} → {join['to_table']}.{join['to_field']}"
-                    )
+                    join_lines.append(f"{table}.{join['from_field']} → {join['to_table']}.{join['to_field']}")
         if join_lines:
-            lines.append("Use these known joins when needed:")
+            lines.append("Known joins:")
             lines.extend(join_lines)
-
-        lines.append(
-            "🚫 Do NOT hallucinate tables or fields. Only query the tables and columns listed above."
-        )
-        lines.append("⚠️ You must not hallucinate or guess column names.")
-        lines.append(
-            "🛑 Do NOT use fields like 'loyalty_card', 'first_name', or 'point_delta' that are not listed above."
-        )
-        lines.append(
-            "Before writing SQL, call the `sql_db_schema_*` tool for the target database to inspect available columns."
-        )
-        lines.append(
-            "Only join tables when both columns exist exactly as shown in the schema."
-        )
-
-        if db == "eyewa_common":
-            lines.append(
-                "You MUST only query these tables and fields. Do NOT assume or guess column names. "
-                "No cross-database joins are allowed. If loyalty info is not present, fallback to: "
-                "SELECT card_number FROM customer_loyalty_card WHERE customer_id = <ID>;"
-            )
-
-        lines.append("Final Tip: Add Debug Logging to Output Before Parsing")
-        lines.append(
-            "You must ALWAYS respond with a valid JSON using double quotes. Do not use single quotes."
-        )
-        lines.append(
-            "Ensure your output matches one of the expected response_types formats (e.g., \"type\": \"loyalty_summary\")."
-        )
-        lines.append("Never return raw SQL tables or prose.")
-
         return "\n".join(lines)
 
     def build_custom_table_info(

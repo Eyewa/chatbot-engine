@@ -101,23 +101,47 @@ def robust_clean(obj):
     else:
         return obj
 
-def parse_agent_output(obj):
+def parse_agent_output(obj, response_type=None):
+    global RESPONSE_TYPES
+    logging.debug(f"[parse_agent_output] Called with obj={repr(obj)} (type={type(obj).__name__}), response_type={response_type}")
     if isinstance(obj, str):
         match = re.search(r"```(?:json)?\s*(.*?)```", obj, re.DOTALL)
         if match:
             obj = match.group(1).strip()
         try:
             parsed = json.loads(obj)
-            return parse_agent_output(parsed)
+            logging.debug(f"[parse_agent_output] Parsed JSON: {repr(parsed)} (type={type(parsed).__name__})")
+            return parse_agent_output(parsed, response_type)
         except Exception:
+            logging.debug(f"[parse_agent_output] Could not parse as JSON, returning message: {repr(obj)}")
             return {"message": obj}
     elif isinstance(obj, list):
-        return {"data": [parse_agent_output(v) for v in obj]}
+        logging.debug(f"[parse_agent_output] Handling list of length {len(obj)}")
+        result = {"data": [parse_agent_output(v, response_type) for v in obj]}
+        logging.debug(f"[parse_agent_output] Returning for list: {repr(result)}")
+        return result
     elif isinstance(obj, dict):
-        # Only recursively parse values except for 'type'
-        return {k: (v if k == "type" else parse_agent_output(v)) for k, v in obj.items()}
+        this_type = response_type
+        if "type" in obj and isinstance(obj["type"], str):
+            this_type = obj["type"]
+        allowed_fields = set(RESPONSE_TYPES.get(this_type, {}).get("fields", [])) if this_type else set()
+        out = {}
+        for k, v in obj.items():
+            logging.debug(f"[parse_agent_output] Dict key={k}, value={repr(v)} (type={type(v).__name__}), allowed_fields={allowed_fields}")
+            if k == "type":
+                out[k] = v
+            elif k in allowed_fields:
+                if isinstance(v, (dict, list)):
+                    out[k] = parse_agent_output(v, this_type)
+                else:
+                    out[k] = v
+            else:
+                out[k] = parse_agent_output(v, this_type)
+        logging.debug(f"[parse_agent_output] Returning for dict: {repr(out)}")
+        return out
     else:
-        return {"message": str(obj)}
+        logging.debug(f"[parse_agent_output] Returning primitive as-is: {repr(obj)} (type={type(obj).__name__})")
+        return obj
 
 def merge_outputs(live, common):
     # Both are dicts
@@ -177,6 +201,36 @@ def flatten_allowed_fields(obj, allowed_fields):
             flat[k] = v
     return flat
 
+def filter_order_fields(orders, allowed_fields):
+    if isinstance(orders, list):
+        return [
+            {k: v for k, v in order.items() if k in allowed_fields}
+            for order in orders
+        ]
+    return orders
+
+# Robust schema enforcement for all response types
+def enforce_response_schema(final, response_types):
+    response_type = final.get("type")
+    allowed_fields = set(response_types.get(response_type, {}).get("fields", []))
+    result = {"type": response_type}
+    extras = {}
+    for field, value in final.items():
+        if field == "type":
+            continue
+        if field in allowed_fields:
+            result[field] = value
+        else:
+            extras[field] = value
+    if extras:
+        result["extras"] = extras
+    # Special handling for orders_summary: filter fields in each order (as before)
+    if response_type == "orders_summary" and "orders" in result:
+        allowed_order_fields = {"order_id", "order_amount", "customer_name"}
+        result["orders"] = filter_order_fields(result["orders"], allowed_order_fields)
+    logging.debug(f"[enforce_response_schema] Returning: {result}")
+    return result
+
 # ------------------------
 # Request and Response Models
 # ------------------------
@@ -188,7 +242,7 @@ class ChatbotRequest(BaseModel):
     conversation_id: Optional[str] = Field(default=None, alias="conversationId", description="ID used to fetch previous messages")
 
 class ChatbotResponse(BaseModel):
-    output: Any = Field(..., description="Chatbot's concise reply")
+    output: Any = Field(..., description="Chatbot's concise reply (can be a dict or a list of dicts)")
 
 class ErrorResponse(BaseModel):
     detail: str
@@ -226,6 +280,29 @@ def extract_final_output(raw_output: str) -> str:
     except Exception as e:
         logging.warning("⚠️ Could not parse structured output: %s", e)
         return raw_output.strip()
+
+def generate_llm_message(output, llm):
+    prompt = (
+        "Given the following structured data, write a friendly, concise summary for the user. "
+        "If the data is empty or no results were found, say so clearly.\n\n"
+        f"DATA:\n{json.dumps(output, indent=2)}\n"
+    )
+    if isinstance(output, dict) and "extras" in output:
+        prompt += (
+            "\nIf there is an 'extras' field, naturally include its information in the summary as if it were part of the main answer. "
+            "Do not mention the word 'extras' or that it is an extra detail—just present the information conversationally."
+        )
+    try:
+        resp = llm.invoke([
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": prompt}
+        ])
+        if hasattr(resp, "content"):
+            return str(resp.content)
+        return str(resp)
+    except Exception as e:
+        logging.warning(f"⚠️ Could not generate LLM message: {e}")
+        return "I'm sorry, I couldn't summarize the data."
 
 # ------------------------
 # FastAPI App Setup
@@ -287,60 +364,48 @@ def create_app() -> FastAPI:
             logging.info("[DEBUG-CHAT-RAW] Type: %s, Value: %r", type(result), result)
             logging.info("[DEBUG-CHAT] Raw agent result: %s", result)
 
-            # --- Robust parsing, merging, and filtering ---
-            merged: Dict[str, Any]
+            # --- Robust parsing, routing, and filtering ---
+            summaries = []
             if isinstance(result, dict) and "live" in result and "common" in result:
-                live   = parse_agent_output(result["live"])   or {}
+                # Handle 'both' intent: return two separate summaries
+                live = parse_agent_output(result["live"]) or {}
                 logging.info("[DEBUG-CHAT] Parsed live: %s", live)
                 common = parse_agent_output(result["common"]) or {}
                 logging.info("[DEBUG-CHAT] Parsed common: %s", common)
-                merged = {**live, **common}
-                logging.info("[DEBUG-CHAT] Merged live+common: %s", merged)
+                for summary in (live, common):
+                    merged = summary if isinstance(summary, dict) else {}
+                    merged = flatten_orders_field(merged)
+                    allowed_fields = set(RESPONSE_TYPES.get(merged.get("type"), {}).get("fields", [])) if isinstance(merged, dict) else set()
+                    merged = flatten_allowed_fields(merged, allowed_fields)
+                    logging.info("[DEBUG-CHAT] After flatten_allowed_fields: %s", merged)
+                    final = unwrap_message_dicts(merged)
+                    final = enforce_response_schema(final, RESPONSE_TYPES)
+                    logging.info("[DEBUG-CHAT] Final schema-enforced response: %s", final)
+                    if final and isinstance(final, dict) and final.get("type") and len(final) > 1:
+                        summaries.append(final)
+                if not summaries:
+                    summaries = [{"type": "text_response", "message": "No data found from either source."}]
+                output = summaries if len(summaries) > 1 else summaries[0]
             else:
-                single = parse_agent_output(result) or {}
+                # Single summary
+                if isinstance(result, dict) and "output" in result:
+                    single = parse_agent_output(result["output"]) or {}
+                else:
+                    single = parse_agent_output(result) or {}
                 logging.info("[DEBUG-CHAT] Parsed single: %s", single)
                 merged = single if isinstance(single, dict) else {}
-                logging.info("[DEBUG-CHAT] Merged single: %s", merged)
-
-            # 2) infer the best matching type from the fields we actually got
-            current_type = merged.get("type")
-            logging.info("[DEBUG-CHAT] Current type before inference: %s", current_type)
-            if not isinstance(current_type, str) or current_type not in RESPONSE_TYPES:
-                counts: Dict[str, int] = {}
-                for field in merged.keys():
-                    for t in FIELD_TO_TYPES.get(field, []):
-                        counts[t] = counts.get(t, 0) + 1
-                logging.info("[DEBUG-CHAT] Type match counts: %s", counts)
-                # pick the type with the highest match count, or fallback to 'text_response'
-                best_type = max(counts, key=lambda t: counts[t], default="text_response")
-                merged["type"] = best_type
-                logging.info("[DEBUG-CHAT] Inferred type: %s", best_type)
-
-            # Fallback: if merged is empty or only has type, treat as text_response
-            if not merged or (list(merged.keys()) == ["type"]):
-                merged = {"type": "text_response", "message": request.input}
-                logging.info("[DEBUG-CHAT] Fallback to text_response: %s", merged)
-            elif merged.get("type") == "text_response" and "message" not in merged:
-                # If type is text_response but no message, use input or a generic fallback
-                merged["message"] = request.input
-                logging.info("[DEBUG-CHAT] Added message to text_response: %s", merged)
-
-            # 3) drop any keys not in that schema
-            merged = flatten_orders_field(merged)
-            logging.info("[DEBUG-CHAT] After flatten_orders_field: %s", merged)
-            allowed_fields = set(RESPONSE_TYPES.get(merged.get("type"), {}).get("fields", []))
-            merged = flatten_allowed_fields(merged, allowed_fields)
-            logging.info("[DEBUG-CHAT] After flatten_allowed_fields: %s", merged)
-            final = filter_response_by_type(merged)
-            logging.info("[DEBUG-CHAT] Final filtered response: %s", final)
-
-            # Unwrap message dictionaries
-            final = unwrap_message_dicts(final)
-            logging.info("[DEBUG-CHAT] Final unwrapped response: %s", final)
+                merged = flatten_orders_field(merged)
+                allowed_fields = set(RESPONSE_TYPES.get(merged.get("type"), {}).get("fields", [])) if isinstance(merged, dict) else set()
+                merged = flatten_allowed_fields(merged, allowed_fields)
+                logging.info("[DEBUG-CHAT] After flatten_allowed_fields: %s", merged)
+                final = unwrap_message_dicts(merged)
+                final = enforce_response_schema(final, RESPONSE_TYPES)
+                logging.info("[DEBUG-CHAT] Final schema-enforced response: %s", final)
+                output = final
 
             # Save to history
             try:
-                result_str = json.dumps(final)
+                result_str = json.dumps(output)
                 if request.conversation_id:
                     repo.save_message(
                         request.conversation_id,
@@ -352,7 +417,25 @@ def create_app() -> FastAPI:
             except Exception as e:
                 logging.warning("⚠️ Could not save chat history: %s", e)
 
-            return ChatbotResponse(output=final)
+            # If output is a list, generate a single message summarizing all summaries
+            if isinstance(output, list):
+                message = generate_llm_message(output, ChatOpenAI(model="gpt-4o", temperature=0))
+                top_level = {"message": message, "data": output}
+                output = top_level
+            else:
+                message = generate_llm_message(output, ChatOpenAI(model="gpt-4o", temperature=0))
+                if isinstance(output, dict):
+                    # Always include extras if present
+                    out: dict[str, Any] = {"message": message}
+                    for k, v in output.items():
+                        if k != "message":
+                            out[k] = v
+                    output = out
+                else:
+                    output = {"message": message}
+            logging.info("[DEBUG-CHAT] Final conversational response: %s", output)
+
+            return ChatbotResponse(output=output)
 
         except Exception as e:
             logging.error(f"💥 Error during chat: {e}", exc_info=True)
