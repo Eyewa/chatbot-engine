@@ -18,6 +18,7 @@ mixed_summary:
   fields:
     - orders
     - loyalty_card
+    - customer
 
 text_response:
   fields:

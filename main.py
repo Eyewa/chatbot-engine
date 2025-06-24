@@ -4,7 +4,7 @@ import re
 import ast
 import json
 import logging
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Dict
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -23,6 +23,12 @@ from simple_yaml import safe_load
 # Load response types config
 with open(os.path.join("config", "templates", "response_types.yaml")) as f:
     RESPONSE_TYPES = safe_load(f)
+
+# build a reverse index: field → list of types that include it
+FIELD_TO_TYPES: Dict[str, List[str]] = {}
+for type_name, spec in RESPONSE_TYPES.items():
+    for f in spec.get("fields", []):
+        FIELD_TO_TYPES.setdefault(f, []).append(type_name)
 
 # Add this mapping at the top (after RESPONSE_TYPES is loaded)
 OUTPUT_TO_YAML_KEY_MAP = {
@@ -82,7 +88,7 @@ def merge_and_filter_responses(live, common, llm=None):
 def robust_clean(obj):
     if isinstance(obj, str):
         # Remove code block
-        match = re.search(r"```(?:json)?\\n?(.*?)```", obj, re.DOTALL)
+        match = re.search(r"```(?:json)?\s*(.*?)```", obj, re.DOTALL)
         if match:
             obj = match.group(1).strip()
         # Try to parse as JSON
@@ -100,22 +106,21 @@ def robust_clean(obj):
 
 def parse_agent_output(obj):
     if isinstance(obj, str):
-        # Remove code block
-        match = re.search(r"```(?:json)?\\n?(.*?)```", obj, re.DOTALL)
+        match = re.search(r"```(?:json)?\s*(.*?)```", obj, re.DOTALL)
         if match:
             obj = match.group(1).strip()
-        # Try to parse as JSON
         try:
             parsed = json.loads(obj)
             return parse_agent_output(parsed)
         except Exception:
-            return None
+            return {"message": obj}
     elif isinstance(obj, list):
         return {"data": [parse_agent_output(v) for v in obj]}
     elif isinstance(obj, dict):
-        return {k: parse_agent_output(v) for k, v in obj.items()}
+        # Only recursively parse values except for 'type'
+        return {k: (v if k == "type" else parse_agent_output(v)) for k, v in obj.items()}
     else:
-        return obj
+        return {"message": str(obj)}
 
 def merge_outputs(live, common):
     # Both are dicts
@@ -237,27 +242,55 @@ def create_app() -> FastAPI:
                 except Exception as e:
                     logging.warning("⚠️ Could not fetch chat history: %s", e)
 
-            logging.info("🧠 Processing input: %s", request.input)
-            result = agent.invoke({"input": request.input, "chat_history": history})
-            logging.info("🔍 Raw agent result: %s", result)
+            logging.info("[DEBUG-CHAT] Input: %s", request.input)
+            # Classify intent once and use for both routing and history
             intent = _classify_query(request.input, classifier_chain)
+            logging.info("[DEBUG-CHAT] Classifier prediction: %s", intent)
+            result = agent.invoke({"input": request.input, "chat_history": history})
+            logging.info("[DEBUG-CHAT-RAW] Type: %s, Value: %r", type(result), result)
+            logging.info("[DEBUG-CHAT] Raw agent result: %s", result)
 
             # --- Robust parsing, merging, and filtering ---
+            merged: Dict[str, Any]
             if isinstance(result, dict) and "live" in result and "common" in result:
-                live = parse_agent_output(result["live"])
-                common = parse_agent_output(result["common"])
-                final = merge_outputs(live, common)
+                live   = parse_agent_output(result["live"])   or {}
+                logging.info("[DEBUG-CHAT] Parsed live: %s", live)
+                common = parse_agent_output(result["common"]) or {}
+                logging.info("[DEBUG-CHAT] Parsed common: %s", common)
+                merged = {**live, **common}
+                logging.info("[DEBUG-CHAT] Merged live+common: %s", merged)
             else:
-                final = parse_agent_output(result)
-                if not isinstance(final, dict):
-                    final = {"type": "text_response", "data": final}
-                else:
-                    try:
-                        if "type" not in final or not isinstance(final["type"], str) or not final["type"]:
-                            raise Exception("Invalid type key")
-                    except Exception:
-                        final = {"type": "text_response", "data": str(final)}
-                final = filter_response_by_type(final)
+                single = parse_agent_output(result) or {}
+                logging.info("[DEBUG-CHAT] Parsed single: %s", single)
+                merged = single if isinstance(single, dict) else {}
+                logging.info("[DEBUG-CHAT] Merged single: %s", merged)
+
+            # 2) infer the best matching type from the fields we actually got
+            current_type = merged.get("type")
+            logging.info("[DEBUG-CHAT] Current type before inference: %s", current_type)
+            if not isinstance(current_type, str) or current_type not in RESPONSE_TYPES:
+                counts: Dict[str, int] = {}
+                for field in merged.keys():
+                    for t in FIELD_TO_TYPES.get(field, []):
+                        counts[t] = counts.get(t, 0) + 1
+                logging.info("[DEBUG-CHAT] Type match counts: %s", counts)
+                # pick the type with the highest match count, or fallback to 'text_response'
+                best_type = max(counts, key=lambda t: counts[t], default="text_response")
+                merged["type"] = best_type
+                logging.info("[DEBUG-CHAT] Inferred type: %s", best_type)
+
+            # Fallback: if merged is empty or only has type, treat as text_response
+            if not merged or (list(merged.keys()) == ["type"]):
+                merged = {"type": "text_response", "message": request.input}
+                logging.info("[DEBUG-CHAT] Fallback to text_response: %s", merged)
+            elif merged.get("type") == "text_response" and "message" not in merged:
+                # If type is text_response but no message, use input or a generic fallback
+                merged["message"] = request.input
+                logging.info("[DEBUG-CHAT] Added message to text_response: %s", merged)
+
+            # 3) drop any keys not in that schema
+            final = filter_response_by_type(merged)
+            logging.info("[DEBUG-CHAT] Final filtered response: %s", final)
 
             # Save to history
             try:
