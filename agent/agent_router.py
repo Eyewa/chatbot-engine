@@ -42,6 +42,7 @@ except Exception:
 from tools.sql_toolkit_factory import get_live_sql_tools, get_common_sql_tools
 from agent.prompt_builder import PromptBuilder
 from agent.config_loader import config_loader
+from agent.utils import filter_response_by_type
 
 # -------------------------
 # CLASSIFIER & INTENT
@@ -262,22 +263,30 @@ def _combine_responses(resp_live, resp_common):
     common_data = _parse(resp_common)
     logging.debug(f"[_combine_responses] Parsed live_data: {live_data}, common_data: {common_data}")
 
+    cleaned_live = deep_clean_json_blocks(live_data)
+    if isinstance(cleaned_live, dict):
+        cleaned_live = filter_response_by_type(cleaned_live)
+    cleaned_common = deep_clean_json_blocks(common_data)
+    if isinstance(cleaned_common, dict):
+        cleaned_common = filter_response_by_type(cleaned_common)
+
     # If both are empty or None
-    if not live_data and not common_data:
+    if not cleaned_live and not cleaned_common:
         logging.info("[_combine_responses] No data from either source.")
         return {"type": "text_response", "message": "No data found from either source"}
     # If only live has data
-    if live_data and not common_data:
-        logging.info("[_combine_responses] Only live data present.")
-        return deep_clean_json_blocks(live_data)
+    if cleaned_live and not cleaned_common:
+        return cleaned_live
     # If only common has data
-    if common_data and not live_data:
-        logging.info("[_combine_responses] Only common data present.")
-        return deep_clean_json_blocks(common_data)
+    if cleaned_common and not cleaned_live:
+        return cleaned_common
     # If both have data, return both in a dict
-    merged = {"live": live_data, "common": common_data}
+    merged = {
+        "live": cleaned_live,
+        "common": cleaned_common,
+    }
     logging.info(f"[_combine_responses] Returning merged: {merged}")
-    return deep_clean_json_blocks(merged)
+    return merged
 
 
 # -------------------------

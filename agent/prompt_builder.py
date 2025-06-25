@@ -43,6 +43,14 @@ class PromptBuilder:
             logging.warning(f"⚠️ Failed to load YAML: {path.name} — {e}")
             return {}
 
+    def _map_db_key(self, db: str) -> str:
+        # Map external db names to schema keys
+        if db == "eyewa_live":
+            return "live"
+        if db == "eyewa_common":
+            return "common"
+        return db
+
     def build_system_prompt(
         self, db: str = "live", allowed_tables: Optional[List[str]] = None, extra_examples: Optional[list] = None
     ) -> str:
@@ -64,7 +72,8 @@ class PromptBuilder:
         if allowed_tables:
             lines.append(f"Database: `{db}`. Allowed tables: {', '.join(allowed_tables)}.")
             table_info = []
-            db_tables = self.schema_cfg.get(db, {}).get("tables", {})
+            schema_db_key = self._map_db_key(db)
+            db_tables = self.schema_cfg.get(schema_db_key, {}).get("tables", {})
             for table in allowed_tables:
                 meta = db_tables.get(table, {})
                 custom = meta.get("customInfo")
@@ -92,7 +101,8 @@ class PromptBuilder:
             lines.append("Example join:")
             lines.append(extra_examples[0])
         join_lines = []
-        db_tables = self.schema_cfg.get(db, {}).get("tables", {})
+        schema_db_key = self._map_db_key(db)
+        db_tables = self.schema_cfg.get(schema_db_key, {}).get("tables", {})
         for table, meta in db_tables.items():
             if allowed_tables and table not in allowed_tables:
                 continue
@@ -111,7 +121,8 @@ class PromptBuilder:
         self, allowed_tables: Optional[List[str]] = None, db: str = 'live'
     ) -> Dict[str, str]:
         info = {}
-        db_tables = self.schema_cfg.get(db, {}).get("tables", {})
+        schema_db_key = self._map_db_key(db)
+        db_tables = self.schema_cfg.get(schema_db_key, {}).get("tables", {})
         for table, meta in db_tables.items():
             if allowed_tables and table not in allowed_tables:
                 continue
@@ -180,10 +191,12 @@ class PromptBuilder:
                     ), f"Invalid join format in {table}"
 
     def get_table_meta(self, table: str, db: str = 'live') -> dict:
-        return self.schema_cfg.get(db, {}).get('tables', {}).get(table, {})
+        schema_db_key = self._map_db_key(db)
+        return self.schema_cfg.get(schema_db_key, {}).get('tables', {}).get(table, {})
 
     def build_mini_schema(self, tables: List[str], db: str = 'live') -> dict:
         mini = {'tables': {}}
+        schema_db_key = self._map_db_key(db)
         for table in tables:
             table_meta = self.get_table_meta(table, db)
             if table_meta:

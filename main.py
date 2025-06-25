@@ -20,6 +20,7 @@ from agent.reload_config import router as reload_router
 
 from langchain_openai import ChatOpenAI
 from simple_yaml import safe_load
+from agent.utils import filter_response_by_type
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -39,18 +40,6 @@ OUTPUT_TO_YAML_KEY_MAP = {
     "loyalty_card": "loyalty_summary",
     # Add more mappings as needed
 }
-
-def filter_response_by_type(response_json: dict) -> dict:
-    response_type = response_json.get("type")
-    if not response_type or response_type not in RESPONSE_TYPES:
-        return response_json
-    allowed_fields = RESPONSE_TYPES[response_type].get("fields", [])
-    filtered = {"type": response_type}
-    for key in allowed_fields:
-        # Always include the field if present, even if it's an empty list or None
-        if key in response_json:
-            filtered[key] = response_json[key]
-    return filtered
 
 def merge_and_filter_responses(live, common, llm=None):
     merged = {}
