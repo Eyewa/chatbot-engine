@@ -3,6 +3,7 @@
 from pathlib import Path
 from typing import List
 import json
+import re
 
 try:
     import yaml  # type: ignore
@@ -48,3 +49,7 @@ def load_custom_table_info(schema_path: str, table_names: List[str]) -> str:
         lines.append("")
 
     return "\n".join(lines).strip()
+
+def extract_table_names(sql: str):
+    # Very basic: finds all table names after FROM or JOIN
+    return re.findall(r'(?:from|join)\s+([\w_]+)', sql, re.IGNORECASE)

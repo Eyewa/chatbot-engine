@@ -5,6 +5,7 @@ import ast
 import json
 import logging
 from typing import List, Optional, Any, Dict
+import subprocess
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -19,6 +20,8 @@ from agent.reload_config import router as reload_router
 
 from langchain_openai import ChatOpenAI
 from simple_yaml import safe_load
+
+logging.basicConfig(level=logging.DEBUG)
 
 # Load response types config
 with open(os.path.join("config", "templates", "response_types.yaml")) as f:
@@ -310,6 +313,7 @@ def generate_llm_message(output, llm):
 
 def create_app() -> FastAPI:
     load_dotenv()
+    print("DEBUG: SQL_DATABASE_URI_LIVE =", os.getenv("SQL_DATABASE_URI_LIVE"))
     logging.basicConfig(level=logging.INFO)
     logging.info(f"🟢 Starting chatbot API in '{os.getenv('ENV', 'local')}' environment")
 
@@ -331,6 +335,20 @@ def create_app() -> FastAPI:
     repo = ChatHistoryRepository()
     classifier_chain = _create_classifier_chain()
 
+    # Only run tests in the main process (avoid double run with reload)
+    if os.environ.get("RUN_MAIN") == "true" or os.environ.get("SERVER_MAIN") == "true" or not os.environ.get("RUN_MAIN"):
+        try:
+            print("[Startup Test] Running all tests with pytest...")
+            result = subprocess.run(["pytest", "--maxfail=1", "--disable-warnings"], capture_output=True, text=True)
+            print(result.stdout)
+            if result.returncode != 0:
+                print("[Startup Test] Some tests failed:")
+                print(result.stderr)
+            else:
+                print("[Startup Test] All tests passed.")
+        except Exception as e:
+            print(f"[Startup Test] Could not run pytest: {e}")
+
     @app.exception_handler(Exception)
     async def handle_error(request: Request, exc: Exception):
         logging.exception("Unhandled Exception occurred")
@@ -346,61 +364,62 @@ def create_app() -> FastAPI:
     @app.post("/chat", response_model=ChatbotResponse, tags=["Chatbot"], responses={500: {"model": ErrorResponse}})
     async def chat_endpoint(request: ChatbotRequest):
         try:
+            logging.debug(f"[CHAT] Received request: {request}")
             if request.input.strip().lower() in ["hi", "hello", "hey"]:
+                logging.debug("[CHAT] Greeting detected, returning welcome message.")
                 return ChatbotResponse(output="👋 Hi there! I'm Winkly. How can I help you today?")
 
             history = request.chat_history
+            logging.debug(f"[CHAT] Initial chat_history: {history}")
             if request.conversation_id:
                 try:
                     history = repo.fetch_history(request.conversation_id, limit=0)
+                    logging.debug(f"[CHAT] Loaded chat history for conversation_id={request.conversation_id}: {history}")
                 except Exception as e:
-                    logging.warning("⚠️ Could not fetch chat history: %s", e)
+                    logging.warning(f"⚠️ Could not fetch chat history: {e}")
 
-            logging.info("[DEBUG-CHAT] Input: %s", request.input)
-            # Classify intent once and use for both routing and history
+            logging.info(f"[CHAT] Input: {request.input}")
             intent = _classify_query(request.input, classifier_chain)
-            logging.info("[DEBUG-CHAT] Classifier prediction: %s", intent)
+            logging.info(f"[CHAT] Classifier prediction: {intent}")
             result = agent.invoke({"input": request.input, "chat_history": history})
-            logging.info("[DEBUG-CHAT-RAW] Type: %s, Value: %r", type(result), result)
-            logging.info("[DEBUG-CHAT] Raw agent result: %s", result)
+            logging.info(f"[CHAT] Raw agent result: {result}")
 
             # --- Robust parsing, routing, and filtering ---
             summaries = []
+            logging.debug(f"[CHAT] Entering summary parsing block. Result type: {type(result)}")
             if isinstance(result, dict) and "live" in result and "common" in result:
-                # Handle 'both' intent: return two separate summaries
                 live = parse_agent_output(result["live"]) or {}
-                logging.info("[DEBUG-CHAT] Parsed live: %s", live)
+                logging.debug(f"[CHAT] Parsed live: {live}")
                 common = parse_agent_output(result["common"]) or {}
-                logging.info("[DEBUG-CHAT] Parsed common: %s", common)
+                logging.debug(f"[CHAT] Parsed common: {common}")
                 for summary in (live, common):
                     merged = summary if isinstance(summary, dict) else {}
                     merged = flatten_orders_field(merged)
                     allowed_fields = set(RESPONSE_TYPES.get(merged.get("type"), {}).get("fields", [])) if isinstance(merged, dict) else set()
                     merged = flatten_allowed_fields(merged, allowed_fields)
-                    logging.info("[DEBUG-CHAT] After flatten_allowed_fields: %s", merged)
+                    logging.debug(f"[CHAT] After flatten_allowed_fields: {merged}")
                     final = unwrap_message_dicts(merged)
                     final = enforce_response_schema(final, RESPONSE_TYPES)
-                    logging.info("[DEBUG-CHAT] Final schema-enforced response: %s", final)
+                    logging.debug(f"[CHAT] Final schema-enforced response: {final}")
                     if final and isinstance(final, dict) and final.get("type") and len(final) > 1:
                         summaries.append(final)
                 if not summaries:
                     summaries = [{"type": "text_response", "message": "No data found from either source."}]
                 output = summaries if len(summaries) > 1 else summaries[0]
             else:
-                # Single summary
                 if isinstance(result, dict) and "output" in result:
                     single = parse_agent_output(result["output"]) or {}
                 else:
                     single = parse_agent_output(result) or {}
-                logging.info("[DEBUG-CHAT] Parsed single: %s", single)
+                logging.debug(f"[CHAT] Parsed single: {single}")
                 merged = single if isinstance(single, dict) else {}
                 merged = flatten_orders_field(merged)
                 allowed_fields = set(RESPONSE_TYPES.get(merged.get("type"), {}).get("fields", [])) if isinstance(merged, dict) else set()
                 merged = flatten_allowed_fields(merged, allowed_fields)
-                logging.info("[DEBUG-CHAT] After flatten_allowed_fields: %s", merged)
+                logging.debug(f"[CHAT] After flatten_allowed_fields: {merged}")
                 final = unwrap_message_dicts(merged)
                 final = enforce_response_schema(final, RESPONSE_TYPES)
-                logging.info("[DEBUG-CHAT] Final schema-enforced response: %s", final)
+                logging.debug(f"[CHAT] Final schema-enforced response: {final}")
                 output = final
 
             # Save to history
@@ -414,8 +433,9 @@ def create_app() -> FastAPI:
                         intent=intent,
                         debug_info={"raw_output": result_str},
                     )
+                    logging.debug(f"[CHAT] Saved message to history for conversation_id={request.conversation_id}")
             except Exception as e:
-                logging.warning("⚠️ Could not save chat history: %s", e)
+                logging.warning(f"⚠️ Could not save chat history: {e}")
 
             # If output is a list, generate a single message summarizing all summaries
             if isinstance(output, list):
@@ -425,7 +445,6 @@ def create_app() -> FastAPI:
             else:
                 message = generate_llm_message(output, ChatOpenAI(model="gpt-4o", temperature=0))
                 if isinstance(output, dict):
-                    # Always include extras if present
                     out: dict[str, Any] = {"message": message}
                     for k, v in output.items():
                         if k != "message":
@@ -433,7 +452,7 @@ def create_app() -> FastAPI:
                     output = out
                 else:
                     output = {"message": message}
-            logging.info("[DEBUG-CHAT] Final conversational response: %s", output)
+            logging.info(f"[CHAT] Final conversational response: {output}")
 
             return ChatbotResponse(output=output)
 

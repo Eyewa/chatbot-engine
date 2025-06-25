@@ -1,0 +1,46 @@
+# Query routing configuration
+# Only contains routing/classification logic
+
+classification_rules:
+  keywords:
+    live_only:
+      - "order"
+      - "payment"
+      - "customer"
+      - "address"
+      - "shipping"
+      - "billing"
+    common_only:
+      - "loyalty"
+      - "wallet"
+      - "ledger"
+      - "points"
+      - "balance"
+    requires_ledger:
+      - "ledger"
+      - "history"
+      - "transaction"
+      - "balance"
+      - "points"
+      - "amount"
+      - "expiry"
+    basic_card_only:
+      - "card"
+      - "card number"
+      - "loyalty card"
+
+query_scoping:
+  both_databases:
+    live_prompt_suffix: " (only fetch from orders, payments, customers)"
+    common_prompt_suffix: " (only fetch from loyalty, wallet, ledger)"
+    common_basic_suffix: " (only fetch loyalty card number)"
+  fallback_queries:
+    loyalty_card_basic: "SELECT clc.card_number FROM customer_loyalty_card clc WHERE clc.customer_id = {customer_id};"
+    loyalty_card_with_ledger: "SELECT clc.card_number, cll.amount, cll.order_id FROM customer_loyalty_card clc JOIN customer_wallet cw ON clc.customer_id = cw.customer_id LEFT JOIN customer_loyalty_ledger cll ON cw.entity_id = cll.wallet_id WHERE clc.customer_id = {customer_id};"
+
+response_combination:
+  merge_strategies:
+    orders_and_loyalty: "mixed_summary"
+    orders_only: "orders_summary"
+    loyalty_only: "loyalty_summary"
+    default: "text_response" 

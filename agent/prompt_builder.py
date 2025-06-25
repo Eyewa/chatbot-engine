@@ -51,10 +51,12 @@ class PromptBuilder:
             "You are Winkly, a structured data assistant for customer and order data. Use only the schema and rules below.",
             "Rules:",
             "- Use only the tables and fields listed below. Never invent or guess columns, tables, or values.",
+            "- If the user requests a field or table not listed below, respond with an error message indicating the field/table does not exist.",
             "- For order history, use sales_order.increment_id as the order ID. Only use customer_loyalty_ledger.order_id for loyalty transactions, and join to sales_order.increment_id if order details are needed.",
             "- If only loyalty card details are needed, do not join the ledger table.",
             "- Never join across _live and _common databases.",
             "- Do NOT hallucinate tables, fields, or values. Only use what is listed.",
+            "- The only valid database names are 'eyewa_live' and 'eyewa_common'. Never use 'magento_live' or any other database name.",
             "- Always return valid JSON with double quotes. No code blocks, no SQL, no prose.",
             "- Output must match one of the allowed response_types. Top-level key must be 'type'.",
             f"- Valid types: {types}.",
@@ -70,9 +72,9 @@ class PromptBuilder:
                 else:
                     fields = meta.get("fields", [])
                     field_list = ", ".join(fields)
-                    table_info.append(f"- `{table}`: {field_list}")
+                    table_info.append(f"- `{table}`: [ALLOWED FIELDS: {field_list}]")
             if table_info:
-                lines.append("Allowed tables and fields:")
+                lines.append("ALLOWED TABLES AND FIELDS:")
                 lines.extend(table_info)
         # Add a single, clear join example if available
         if extra_examples and len(extra_examples) > 0:
@@ -88,7 +90,10 @@ class PromptBuilder:
         if join_lines:
             lines.append("Known joins:")
             lines.extend(join_lines)
-        return "\n".join(lines)
+        prompt = "\n".join(lines)
+        logging.info(f"[PromptBuilder] Built system prompt for db={db}, allowed_tables={allowed_tables}")
+        logging.debug(f"[PromptBuilder] System prompt:\n{prompt}")
+        return prompt
 
     def build_custom_table_info(
         self, allowed_tables: Optional[List[str]] = None
@@ -160,3 +165,47 @@ class PromptBuilder:
                         and "to_table" in join
                         and "to_field" in join
                     ), f"Invalid join format in {table}"
+
+    def build_mini_schema(self, tables: list) -> dict:
+        mini = {"tables": {}}
+        for table in tables:
+            if table in self.schema_cfg["tables"]:
+                mini["tables"][table] = {
+                    "fields": self.schema_cfg["tables"][table]["fields"],
+                    "joins": [
+                        j for j in self.schema_cfg["tables"][table].get("joins", [])
+                        if j["to_table"] in tables
+                    ]
+                }
+        return mini
+
+    def build_system_prompt_with_mini_schema(
+        self, db: str, relevant_tables: list, extra_examples: Optional[list] = None
+    ) -> str:
+        mini_schema = self.build_mini_schema(relevant_tables)
+        lines = [
+            "You are Winkly, a structured data assistant for customer and order data. Use only the schema and rules below.",
+            "Rules:",
+            "- Use only the tables and fields listed below. Never invent or guess columns, tables, or values.",
+            "- If the user requests a field or table not listed below, respond with an error message indicating the field/table does not exist.",
+            "- Only use joins that are listed below.",
+            "- The only valid database names are 'eyewa_live' and 'eyewa_common'. Never use 'magento_live' or any other database name.",
+            "- Always output a JSON object with: tables, fields, joins, filters, limit, order_by. Do NOT output SQL.",
+        ]
+        # Add mini-schema
+        for table, meta in mini_schema["tables"].items():
+            lines.append(f"- {table}: [ALLOWED FIELDS: {', '.join(meta['fields'])}]")
+        join_lines = []
+        for table, meta in mini_schema["tables"].items():
+            for join in meta.get("joins", []):
+                join_lines.append(f"{table}.{join['from_field']} → {join['to_table']}.{join['to_field']}")
+        if join_lines:
+            lines.append("Known joins:")
+            lines.extend(join_lines)
+        if extra_examples and len(extra_examples) > 0:
+            lines.append("Example join:")
+            lines.append(extra_examples[0])
+        prompt = "\n".join(lines)
+        logging.info(f"[PromptBuilder] Built mini-schema prompt for db={db}, relevant_tables={relevant_tables}")
+        logging.debug(f"[PromptBuilder] Mini-schema prompt:\n{prompt}")
+        return prompt

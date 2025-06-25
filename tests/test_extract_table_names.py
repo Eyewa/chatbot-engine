@@ -1,5 +1,5 @@
 import pytest
-from tools.sql_tool import extract_table_names
+from tools.custom_table_info_loader import extract_table_names
 
 
 def test_extract_table_names_simple():

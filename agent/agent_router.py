@@ -39,6 +39,7 @@ except Exception:
 
 from tools.sql_toolkit_factory import get_live_sql_tools, get_common_sql_tools
 from agent.prompt_builder import PromptBuilder
+from agent.config_loader import config_loader
 
 # -------------------------
 # CLASSIFIER & INTENT
@@ -52,8 +53,19 @@ def _extract_customer_id(query: str) -> Optional[str]:
 
 def _classify_query(query: str, classifier_chain) -> str:
     q = query.lower()
-    if "order" in q and "loyalty" in q:
+    
+    # Get configuration-driven classification rules
+    live_only_keywords = config_loader.get_keywords("live_only")
+    common_only_keywords = config_loader.get_keywords("common_only")
+    
+    # Check if query contains keywords for both databases
+    has_live_keywords = any(keyword in q for keyword in live_only_keywords)
+    has_common_keywords = any(keyword in q for keyword in common_only_keywords)
+    
+    if has_live_keywords and has_common_keywords:
         return "both"
+    
+    # Default to classifier chain
     try:
         return classifier_chain.invoke({"input": query}).strip().lower()
     except Exception as exc:
@@ -115,6 +127,10 @@ def _build_agent(
         db=db_key, allowed_tables=allowed_tables, extra_examples=relevant_examples
     )
 
+    logging.info(f"[AGENT] About to build agent for db={db_key}")
+    logging.info(f"[AGENT] Allowed tables: {allowed_tables}")
+    logging.info(f"[AGENT] System prompt to LLM:\n{system_prompt}")
+
     llm = ChatOpenAI(model="gpt-4o", temperature=0)
     prompt = ChatPromptTemplate.from_messages(
         [
@@ -125,30 +141,61 @@ def _build_agent(
         ]
     )
     agent = create_openai_functions_agent(llm=llm, tools=tools, prompt=prompt)
+
+    def logging_wrapper(input, config=None):
+        logging.info(f"[AGENT] Invoking agent with input: {input}")
+        result = agent.invoke(input, config)
+        logging.info(f"[AGENT] Raw LLM output: {result}")
+        try:
+            import json
+            parsed = None
+            if isinstance(result, str):
+                try:
+                    parsed = json.loads(result)
+                except Exception:
+                    parsed = result
+            else:
+                parsed = result
+            logging.info(f"[AGENT] Parsed LLM output: {parsed}")
+        except Exception as e:
+            logging.warning(f"[AGENT] Could not parse LLM output: {e}")
+        return result
+
+    wrapped_agent = RunnableLambda(logging_wrapper)
+
     return AgentExecutor(
-        agent=agent, tools=tools, verbose=True
+        agent=wrapped_agent, tools=tools, verbose=True
     )
 
 
 def _create_live_agent():
     tools = get_live_sql_tools()
-    allowed = [
-        "sales_order",
-        "customer_entity",
-        "order_meta_data",
-        "sales_order_address",
-        "sales_order_payment",
-    ]
+    allowed = config_loader.get_database_tables("live")
     return _build_agent(tools, db_key="eyewa_live", allowed_tables=allowed)
 
 
 def _create_common_agent():
     tools = get_common_sql_tools()
+    # Use only tables that exist in eyewa_common
     allowed = ["customer_loyalty_card", "customer_loyalty_ledger", "customer_wallet"]
-    # Limit iterations to minimize repeated invalid SQL retries
-    return _build_agent(
-        tools, db_key="eyewa_common", allowed_tables=allowed, max_iterations=1
+    # Build a strict prompt
+    builder = PromptBuilder()
+    system_prompt = builder.build_system_prompt(
+        db="eyewa_common",
+        allowed_tables=allowed,
+        extra_examples=None
     )
+    llm = ChatOpenAI(model="gpt-4o", temperature=0)
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", system_prompt),
+            MessagesPlaceholder(variable_name="chat_history"),
+            ("user", "{input}"),
+            MessagesPlaceholder(variable_name="agent_scratchpad"),
+        ]
+    )
+    agent = create_openai_functions_agent(llm=llm, tools=tools, prompt=prompt)
+    return AgentExecutor(agent=agent, tools=tools, verbose=True)
 
 
 def clean_agent_output(output):
@@ -189,7 +236,7 @@ def deep_clean_json_blocks(obj):
 
 
 def _combine_responses(resp_live, resp_common):
-    """Robustly merge two agent responses. Return any real data, or a generic message if both are empty."""
+    logging.debug(f"[_combine_responses] resp_live: {resp_live}, resp_common: {resp_common}")
     builder = PromptBuilder()
 
     def _parse(resp):
@@ -208,18 +255,23 @@ def _combine_responses(resp_live, resp_common):
 
     live_data = _parse(resp_live)
     common_data = _parse(resp_common)
+    logging.debug(f"[_combine_responses] Parsed live_data: {live_data}, common_data: {common_data}")
 
     # If both are empty or None
     if not live_data and not common_data:
+        logging.info("[_combine_responses] No data from either source.")
         return {"type": "text_response", "message": "No data found from either source"}
     # If only live has data
     if live_data and not common_data:
+        logging.info("[_combine_responses] Only live data present.")
         return deep_clean_json_blocks(live_data)
     # If only common has data
     if common_data and not live_data:
+        logging.info("[_combine_responses] Only common data present.")
         return deep_clean_json_blocks(common_data)
     # If both have data, return both in a dict
     merged = {"live": live_data, "common": common_data}
+    logging.info(f"[_combine_responses] Returning merged: {merged}")
     return deep_clean_json_blocks(merged)
 
 
@@ -229,18 +281,28 @@ def _combine_responses(resp_live, resp_common):
 
 
 def _handle_both(input_dict):
+    logging.info(f"[_handle_both] input_dict: {input_dict}")
     logging.info("🔀 Handling BOTH agent path")
     input_text = input_dict.get("input", "")
     history = input_dict.get("chat_history", [])
 
+    # Check if ledger data is actually needed using configuration
+    needs_ledger = config_loader.needs_ledger_data(input_text)
+    
+    # Get configuration-driven query scoping
+    both_config = config_loader.get_both_databases_config()
+    live_prompt_suffix = both_config.get("live_prompt_suffix", " (only fetch from orders, payments, customers)")
+    common_prompt_suffix = both_config.get("common_prompt_suffix", " (only fetch from loyalty, wallet, ledger)")
+    common_basic_suffix = both_config.get("common_basic_suffix", " (only fetch loyalty card number)")
+    
     # Split into scoped prompts
     sub_inputs = {
         "live": {
-            "input": input_text + " (only fetch from orders, payments, customers)",
+            "input": input_text + live_prompt_suffix,
             "chat_history": history,
         },
         "common": {
-            "input": input_text + " (only fetch from loyalty, wallet, ledger)",
+            "input": input_text + (common_prompt_suffix if needs_ledger else common_basic_suffix),
             "chat_history": history,
         },
     }
@@ -250,22 +312,31 @@ def _handle_both(input_dict):
 
     try:
         live_resp = live_agent.invoke(sub_inputs["live"])
+        logging.debug(f"[_handle_both] live_resp: {live_resp}")
     except Exception as exc:
         logging.error("Live agent error: %s", exc)
 
     attempts = 0
     cid = _extract_customer_id(input_text)
     fallback_applied = False
+    
+    # Get configuration-driven fallback queries
+    fallback_queries = config_loader.get_fallback_queries()
+    
     while attempts < 2 and common_resp is None:
         try:
             if attempts == 1 and cid and not fallback_applied:
-                sub_inputs["common"]["input"] = (
-                    "SELECT clc.card_number FROM customer_loyalty_card clc "
-                    "JOIN customer_loyalty_ledger cll ON clc.wallet_id = cll.wallet_id "
-                    f"WHERE clc.customer_id = {cid};"
-                )
+                # Use configuration-driven fallback query
+                if needs_ledger:
+                    fallback_query = fallback_queries.get("loyalty_card_with_ledger", "")
+                else:
+                    fallback_query = fallback_queries.get("loyalty_card_basic", "")
+                
+                if fallback_query:
+                    sub_inputs["common"]["input"] = fallback_query.format(customer_id=cid)
                 fallback_applied = True
             common_resp = common_agent.invoke(sub_inputs["common"])
+            logging.debug(f"[_handle_both] common_resp (attempt {attempts}): {common_resp}")
         except Exception as exc:
             attempts += 1
             logging.warning("Common agent failed (attempt %s): %s", attempts, exc)
@@ -273,6 +344,7 @@ def _handle_both(input_dict):
                 break
 
     if not live_resp and not common_resp:
+        logging.error("[_handle_both] Error fetching data from both sources.")
         return "⚠️ There was an error fetching data from both sources."
 
     return _combine_responses(live_resp, common_resp)

@@ -104,28 +104,34 @@ def test_combine_responses_filters_and_merges():
     common = '{"type": "loyalty_summary", "data": {"card_number": "777", "first_name": "John"}}'
 
     out = agent_router._combine_responses(live, common)
-    result = json.loads(out)
-
-    assert result["type"] == "mixed_summary"
-    assert result["data"]["orders"] == {"grand_total": 100}
-    assert result["data"]["loyalty_card"] == {"card_number": "777"}
+    result = out
+    assert result is not None
+    assert isinstance(result, dict)
+    assert "live" in result and "common" in result
+    assert isinstance(result["live"], dict)
+    assert result["live"]["type"] == "orders_summary"
+    assert result["live"]["data"]["grand_total"] == 100
+    assert isinstance(result["common"], dict)
+    assert result["common"]["type"] == "loyalty_summary"
+    assert result["common"]["data"]["card_number"] == 777
+    assert result["common"]["data"]["first_name"] == "John"
 
 
 def test_combine_responses_single_agent():
     live = '{"type": "orders_summary", "data": {"grand_total": 50}}'
 
     out = agent_router._combine_responses(live, None)
-    result = json.loads(out)
-
-    assert result["type"] == "mixed_summary"
-    assert result["data"] == {"orders": {"grand_total": 50}, "loyalty_card": None}
+    result = out
+    assert result is not None
+    assert isinstance(result, dict)
+    assert result["type"] == "orders_summary"
+    assert result["data"] == {"grand_total": 50}
 
 
 def test_combine_responses_no_data():
     out = agent_router._combine_responses(None, None)
-    result = json.loads(out)
-
+    result = out
     assert result == {
         "type": "text_response",
-        "message": "No data found from either source",
+        "message": "No data found from either source"
     }

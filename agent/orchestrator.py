@@ -4,30 +4,17 @@ import logging
 from typing import Dict, Any, List
 
 from .classifier import classify
+from .config_loader import config_loader
 from tools.sql_toolkit_factory import (
     get_live_query_tool,
     get_common_query_tool,
 )
+from .prompt_builder import PromptBuilder
 
 try:
     import yaml
 except Exception:
     import simple_yaml as yaml
-
-
-_INTENT_REG_PATH = "config/intent_registry.yaml"
-
-
-def _load_registry() -> Dict[str, Any]:
-    try:
-        with open(_INTENT_REG_PATH, "r", encoding="utf-8") as f:
-            return yaml.safe_load(f) or {}
-    except Exception as e:
-        logging.error(f"❌ Failed to load intent registry: {e}")
-        return {}
-
-
-_REGISTRY = _load_registry()
 
 
 def _build_sql(table: str, fields: List[str], filters: Dict[str, Any] = {}) -> str:
@@ -45,22 +32,54 @@ def orchestrate(query: str) -> Dict[str, Any]:
     classification: Dict[str, Any] = classify(query)
     logging.info(f"🏷️ Classifier output: {classification}")
 
+    # Extract relevant tables from intent registry
+    registry = config_loader.get_intent_registry()
+    relevant_tables = set()
+    for intent in classification.get("intent", []):
+        subs = classification.get("sub_intents", {}).get(intent, [])
+        for sub in subs:
+            cfg = registry.get(intent, {}).get(sub)
+            if cfg and "table" in cfg:
+                relevant_tables.add(cfg["table"])
+    relevant_tables = list(relevant_tables)
+
+    # Build mini-schema prompt
+    builder = PromptBuilder()
+    mini_prompt = builder.build_system_prompt_with_mini_schema(
+        db="eyewa_live", relevant_tables=relevant_tables
+    )
+    logging.info(f"[Mini-schema prompt for LLM]:\n{mini_prompt}")
+
     live_tool = get_live_query_tool()
     common_tool = get_common_query_tool()
 
     results: Dict[str, Any] = {}
     raw_sqls: Dict[str, str] = {}
 
+    # Get intent registry from configuration
+    schema = config_loader.get_schema()
+    db_tables = schema.get('tables', {})
+
     for intent in classification.get("intent", []):
         subs = classification.get("sub_intents", {}).get(intent, [])
         for sub in subs:
-            cfg = _REGISTRY.get(intent, {}).get(sub)
+            cfg = registry.get(intent, {}).get(sub)
             if not cfg:
                 logging.warning(f"⚠️ No config for {intent}.{sub}")
                 continue
 
-            sql = _build_sql(cfg.get("table"), cfg.get("fields", []))
+            table = cfg.get("table")
             db = cfg.get("db", "live")
+            # Only run query if table is allowed in the target DB
+            if db == "live":
+                allowed_tables = ["sales_order", "customer_entity", "order_meta_data", "sales_order_address", "sales_order_payment"]
+            else:
+                allowed_tables = ["customer_loyalty_card", "customer_loyalty_ledger", "customer_wallet"]
+            if table not in allowed_tables:
+                logging.error(f"Table {table} not allowed in db {db}, skipping {intent}.{sub}")
+                continue
+
+            sql = _build_sql(table, cfg.get("fields", []))
             tool = live_tool if db == "live" else common_tool
 
             if tool is None:
