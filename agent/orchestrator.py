@@ -42,7 +42,7 @@ def _build_sql(table: str, fields: List[str], filters: Dict[str, Any] = {}) -> s
 
 def orchestrate(query: str) -> Dict[str, Any]:
     logging.info(f"🧠 Received query: {query}")
-    classification = classify(query)
+    classification: Dict[str, Any] = classify(query)
     logging.info(f"🏷️ Classifier output: {classification}")
 
     live_tool = get_live_query_tool()

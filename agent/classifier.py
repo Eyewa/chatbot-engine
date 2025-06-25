@@ -1,6 +1,6 @@
 from __future__ import annotations
 import re
-from typing import Dict, List
+from typing import Dict, List, Any
 
 try:
     from langchain_openai import ChatOpenAI
@@ -68,7 +68,7 @@ def _rule_based(query: str) -> Dict[str, List[str]]:
     return result
 
 
-def classify(query: str) -> Dict[str, object]:
+def classify(query: str) -> Dict[str, Any]:
     """Return detected intents and sub-intents for a query."""
     if ChatOpenAI is not None:
         try:
