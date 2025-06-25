@@ -1,113 +1,116 @@
 schema_version: 1.0
 
-tables:
-  customer_entity:
-    description: Customer profile information.
-    fields: [entity_id, firstname, middlename, lastname, email, mobile_number, store_id, country_code]
-    joins:
-      - to_table: sales_order
-        from_field: entity_id
-        to_field: customer_id
-      - to_table: sales_order_address
-        from_field: entity_id
-        to_field: customer_id
-      - to_table: customer_loyalty_card
-        from_field: entity_id
-        to_field: customer_id
-      - to_table: customer_wallet
-        from_field: entity_id
-        to_field: customer_id
+live:
+  tables:
+    customer_entity:
+      description: Customer profile information.
+      fields: [entity_id, firstname, middlename, lastname, email, mobile_number, store_id, country_code]
+      joins:
+        - to_table: sales_order
+          from_field: entity_id
+          to_field: customer_id
+        - to_table: sales_order_address
+          from_field: entity_id
+          to_field: customer_id
+        - to_table: customer_loyalty_card
+          from_field: entity_id
+          to_field: customer_id
+        - to_table: customer_wallet
+          from_field: entity_id
+          to_field: customer_id
 
-  sales_order:
-    description: Orders placed by customers.
-    customInfo: "links: customer_entity, payments"
-    fields: [entity_id, increment_id, customer_id, customer_firstname, customer_lastname, customer_email, grand_total, status, created_at]
-    joins:
-      - to_table: customer_entity
-        from_field: customer_id
-        to_field: entity_id
-      - to_table: sales_order_payment
-        from_field: entity_id
-        to_field: parent_id
-      - to_table: sales_order_address
-        from_field: entity_id
-        to_field: parent_id
-      - to_table: sales_order_item
-        from_field: entity_id
-        to_field: order_id
+    sales_order:
+      description: Orders placed by customers.
+      customInfo: "links: customer_entity, payments"
+      fields: [entity_id, increment_id, customer_id, customer_firstname, customer_lastname, customer_email, grand_total, status, created_at]
+      joins:
+        - to_table: customer_entity
+          from_field: customer_id
+          to_field: entity_id
+        - to_table: sales_order_payment
+          from_field: entity_id
+          to_field: parent_id
+        - to_table: sales_order_address
+          from_field: entity_id
+          to_field: parent_id
+        - to_table: sales_order_item
+          from_field: entity_id
+          to_field: order_id
 
-  sales_order_address:
-    description: Shipping and billing addresses related to orders.
-    fields: [entity_id, parent_id, customer_id, firstname, lastname, street, city, telephone, email]
-    joins:
-      - to_table: customer_entity
-        from_field: customer_id
-        to_field: entity_id
-      - to_table: sales_order
-        from_field: parent_id
-        to_field: entity_id
+    sales_order_address:
+      description: Shipping and billing addresses related to orders.
+      fields: [entity_id, parent_id, customer_id, firstname, lastname, street, city, telephone, email]
+      joins:
+        - to_table: customer_entity
+          from_field: customer_id
+          to_field: entity_id
+        - to_table: sales_order
+          from_field: parent_id
+          to_field: entity_id
 
-  sales_order_item:
-    description: Items associated with each sales order.
-    fields: [item_id, order_id, product_id, name, sku, qty_ordered, price]
-    joins:
-      - to_table: sales_order
-        from_field: order_id
-        to_field: entity_id
+    sales_order_item:
+      description: Items associated with each sales order.
+      fields: [item_id, order_id, product_id, name, sku, qty_ordered, price]
+      joins:
+        - to_table: sales_order
+          from_field: order_id
+          to_field: entity_id
 
-  sales_order_payment:
-    description: Payment records for each order.
-    fields: [entity_id, parent_id, method, amount_paid, payment_status]
-    joins:
-      - to_table: sales_order
-        from_field: parent_id
-        to_field: entity_id
+    sales_order_payment:
+      description: Payment records for each order.
+      fields: [entity_id, parent_id, method, amount_paid, payment_status]
+      joins:
+        - to_table: sales_order
+          from_field: parent_id
+          to_field: entity_id
 
-  customer_loyalty_card:
-    description: "Loyalty cards issued to customers. Each card is linked to a customer."
-    fields: [entity_id, customer_id, store_code, card_number, start_date, status, metadata, blocked_date, created_at, updated_at]
-    joins:
-      - to_table: customer_entity
-        from_field: customer_id
-        to_field: entity_id
-      - to_table: customer_wallet
-        from_field: customer_id
-        to_field: customer_id
-        description: "A loyalty card's customer_id matches customer_wallet.customer_id. Use this to join to the wallet."
+common:
+  tables:
+    customer_loyalty_card:
+      description: "Loyalty cards issued to customers. Each card is linked to a customer."
+      fields: [entity_id, customer_id, store_code, card_number, start_date, status, metadata, blocked_date, created_at, updated_at]
+      joins:
+        - to_table: customer_entity
+          from_field: customer_id
+          to_field: entity_id
+        - to_table: customer_wallet
+          from_field: customer_id
+          to_field: customer_id
+          description: "A loyalty card's customer_id matches customer_wallet.customer_id. Use this to join to the wallet."
 
-  customer_loyalty_ledger:
-    description: "Ledger of loyalty transactions for each wallet. Each entry is linked to a wallet via wallet_id. The order_id field refers to sales_order.increment_id (the public order number, not entity_id)."
-    fields: [entity_id, wallet_id, amount, available_amount, status, ledger_type, action, start_time, expiration_time, txn_id, external_txn_id, external_sales_id, order_id, external_rec_id, otc_order, default_loyalty, metadata, reason, created_at, updated_at]
-    joins:
-      - to_table: customer_wallet
-        from_field: wallet_id
-        to_field: entity_id
-        description: "Each ledger entry is for a specific wallet. Join on wallet_id = customer_wallet.entity_id."
-      - to_table: sales_order
-        from_field: order_id
-        to_field: increment_id
-        description: "Join to sales_order.increment_id (public order number) for order details."
+    customer_loyalty_ledger:
+      description: "Ledger of loyalty transactions for each wallet. Each entry is linked to a wallet via wallet_id. The order_id field refers to sales_order.increment_id (the public order number, not entity_id)."
+      fields: [entity_id, wallet_id, amount, available_amount, status, ledger_type, action, start_time, expiration_time, txn_id, external_txn_id, external_sales_id, order_id, external_rec_id, otc_order, default_loyalty, metadata, reason, created_at, updated_at]
+      joins:
+        - to_table: customer_wallet
+          from_field: wallet_id
+          to_field: entity_id
+          description: "Each ledger entry is for a specific wallet. Join on wallet_id = customer_wallet.entity_id."
+        - to_table: sales_order
+          from_field: order_id
+          to_field: increment_id
+          description: "Join to sales_order.increment_id (public order number) for order details."
 
-  customer_wallet:
-    description: "Wallets for customers, holding balances and linked to loyalty ledgers. Each wallet belongs to a customer."
-    customInfo: "customer_id joins to customer_entity"
-    fields: [entity_id, customer_id, store_code, status, customer_balance, cashback_balance, created_at, updated_at, loyalty_balance, next_loyalty_expiry, credits_balance]
-    joins:
-      - to_table: customer_entity
-        from_field: customer_id
-        to_field: entity_id
-      - to_table: customer_loyalty_ledger
-        from_field: entity_id
-        to_field: wallet_id
-        description: "A wallet's entity_id is used as wallet_id in customer_loyalty_ledger."
-      - to_table: customer_credits_ledger
-        from_field: entity_id
-        to_field: wallet_id
+    customer_wallet:
+      description: "Wallets for customers, holding balances and linked to loyalty ledgers. Each wallet belongs to a customer."
+      customInfo: "customer_id joins to customer_entity"
+      fields: [entity_id, customer_id, store_code, status, customer_balance, cashback_balance, created_at, updated_at, loyalty_balance, next_loyalty_expiry, credits_balance]
+      joins:
+        - to_table: customer_entity
+          from_field: customer_id
+          to_field: entity_id
+        - to_table: customer_loyalty_ledger
+          from_field: entity_id
+          to_field: wallet_id
+          description: "A wallet's entity_id is used as wallet_id in customer_loyalty_ledger."
+        - to_table: customer_credits_ledger
+          from_field: entity_id
+          to_field: wallet_id
 
-  customer_credits_ledger:
-    description: Tracks credits transactions linked to customer wallets.
-    fields: [entity_id, wallet_id, action, ledger_type, opening_balance, amount, time, order_id, payment_mode, payment_id, erp_id, created_at, updated_at]
-    joins:
-      - to_table: customer_wallet
-        from_field: wallet_id
-        to_field: entity_id
+    customer_credits_ledger:
+      description: Tracks credits transactions linked to customer wallets.
+      fields: [entity_id, wallet_id, action, ledger_type, opening_balance, amount, time, order_id, payment_mode, payment_id, erp_id, created_at, updated_at]
+      joins:
+        - to_table: customer_wallet
+          from_field: wallet_id
+          to_field: entity_id

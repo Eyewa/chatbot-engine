@@ -6,6 +6,8 @@ import re
 from typing import Optional, Any
 import os
 
+logging.basicConfig(level=logging.DEBUG)
+
 LANGCHAIN_AVAILABLE = False
 try:
     from langchain.agents import create_openai_functions_agent, AgentExecutor  # type: ignore
@@ -171,6 +173,9 @@ def _build_agent(
 def _create_live_agent():
     tools = get_live_sql_tools()
     allowed = config_loader.get_database_tables("live")
+    logging.info(f"[AGENT] Loaded allowed tables from config for eyewa_live: {allowed}")
+    if not allowed:
+        logging.error("[AGENT] No allowed tables found for eyewa_live in config! LLM will hallucinate.")
     return _build_agent(tools, db_key="eyewa_live", allowed_tables=allowed)
 
 
@@ -280,72 +285,85 @@ def _combine_responses(resp_live, resp_common):
 # -------------------------
 
 
+def is_structured_response(resp, expected_types=None):
+    """
+    Returns True if resp is a dict with a known type and at least one required field present.
+    expected_types: list of allowed types (from response_types.yaml), or None for all.
+    """
+    if not isinstance(resp, dict):
+        return False
+    t = resp.get("type")
+    if not t:
+        return False
+    if expected_types and t not in expected_types:
+        return False
+    from main import RESPONSE_TYPES  # avoid circular import at top
+    allowed_fields = RESPONSE_TYPES.get(t, {}).get("fields", [])
+    return any(resp.get(f) is not None for f in allowed_fields)
+
+
+def extract_focused_prompt(user_query, db):
+    """
+    Extract the part of the user query relevant to the given db (live/common).
+    Use regex to extract loyalty/wallet/ledger for common, order/payment/customer for live.
+    If no relevant phrase is found, return None.
+    """
+    customer_id_match = re.findall(r'customer\s*(\d+)', user_query)
+    customer_id_str = f" of customer {''.join(customer_id_match)}" if customer_id_match else ""
+    if db == "common":
+        m = re.search(r"(loyalty card|wallet|ledger|points|balance|expiry|loyalty)", user_query, re.I)
+        if m:
+            return m.group(0) + customer_id_str
+        return None
+    else:
+        m = re.search(r"(order|payment|customer|address|shipping|billing)", user_query, re.I)
+        if m:
+            return m.group(0) + customer_id_str
+        return None
+
+
 def _handle_both(input_dict):
     logging.info(f"[_handle_both] input_dict: {input_dict}")
     logging.info("🔀 Handling BOTH agent path")
     input_text = input_dict.get("input", "")
     history = input_dict.get("chat_history", [])
 
-    # Check if ledger data is actually needed using configuration
-    needs_ledger = config_loader.needs_ledger_data(input_text)
-    
-    # Get configuration-driven query scoping
-    both_config = config_loader.get_both_databases_config()
-    live_prompt_suffix = both_config.get("live_prompt_suffix", " (only fetch from orders, payments, customers)")
-    common_prompt_suffix = both_config.get("common_prompt_suffix", " (only fetch from loyalty, wallet, ledger)")
-    common_basic_suffix = both_config.get("common_basic_suffix", " (only fetch loyalty card number)")
-    
-    # Split into scoped prompts
+    # Extract focused prompts for each DB
+    live_prompt = extract_focused_prompt(input_text, db="live")
+    common_prompt = extract_focused_prompt(input_text, db="common")
+
+    if not live_prompt and not common_prompt:
+        return {"type": "text_response", "message": "Could not determine which data to fetch for either database. Please rephrase your query."}
+    if not live_prompt:
+        return {"type": "text_response", "message": "Could not determine which live (order/customer) data to fetch. Please rephrase your query."}
+    if not common_prompt:
+        return {"type": "text_response", "message": "Could not determine which common (loyalty/wallet/ledger) data to fetch. Please rephrase your query."}
+
     sub_inputs = {
         "live": {
-            "input": input_text + live_prompt_suffix,
+            "input": live_prompt,
             "chat_history": history,
         },
         "common": {
-            "input": input_text + (common_prompt_suffix if needs_ledger else common_basic_suffix),
+            "input": common_prompt,
             "chat_history": history,
         },
     }
 
-    live_resp = None
-    common_resp = None
-
     try:
         live_resp = live_agent.invoke(sub_inputs["live"])
-        logging.debug(f"[_handle_both] live_resp: {live_resp}")
     except Exception as exc:
         logging.error("Live agent error: %s", exc)
-
-    attempts = 0
-    cid = _extract_customer_id(input_text)
-    fallback_applied = False
-    
-    # Get configuration-driven fallback queries
-    fallback_queries = config_loader.get_fallback_queries()
-    
-    while attempts < 2 and common_resp is None:
-        try:
-            if attempts == 1 and cid and not fallback_applied:
-                # Use configuration-driven fallback query
-                if needs_ledger:
-                    fallback_query = fallback_queries.get("loyalty_card_with_ledger", "")
-                else:
-                    fallback_query = fallback_queries.get("loyalty_card_basic", "")
-                
-                if fallback_query:
-                    sub_inputs["common"]["input"] = fallback_query.format(customer_id=cid)
-                fallback_applied = True
-            common_resp = common_agent.invoke(sub_inputs["common"])
-            logging.debug(f"[_handle_both] common_resp (attempt {attempts}): {common_resp}")
-        except Exception as exc:
-            attempts += 1
-            logging.warning("Common agent failed (attempt %s): %s", attempts, exc)
-            if attempts >= 2:
-                break
+        live_resp = None
+    try:
+        common_resp = common_agent.invoke(sub_inputs["common"])
+    except Exception as exc:
+        logging.error("Common agent error: %s", exc)
+        common_resp = None
 
     if not live_resp and not common_resp:
         logging.error("[_handle_both] Error fetching data from both sources.")
-        return "⚠️ There was an error fetching data from both sources."
+        return {"type": "text_response", "message": "There was an error fetching data from both sources."}
 
     return _combine_responses(live_resp, common_resp)
 

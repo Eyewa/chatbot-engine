@@ -44,7 +44,7 @@ class PromptBuilder:
             return {}
 
     def build_system_prompt(
-        self, db: str = "", allowed_tables: Optional[List[str]] = None, extra_examples: Optional[list] = None
+        self, db: str = "live", allowed_tables: Optional[List[str]] = None, extra_examples: Optional[list] = None
     ) -> str:
         types = ", ".join(self.response_cfg.keys())
         lines = [
@@ -64,8 +64,9 @@ class PromptBuilder:
         if allowed_tables:
             lines.append(f"Database: `{db}`. Allowed tables: {', '.join(allowed_tables)}.")
             table_info = []
+            db_tables = self.schema_cfg.get(db, {}).get("tables", {})
             for table in allowed_tables:
-                meta = self.schema_cfg.get("tables", {}).get(table, {})
+                meta = db_tables.get(table, {})
                 custom = meta.get("customInfo")
                 if custom:
                     table_info.append(f"- `{table}`: {custom}")
@@ -76,12 +77,23 @@ class PromptBuilder:
             if table_info:
                 lines.append("ALLOWED TABLES AND FIELDS:")
                 lines.extend(table_info)
+            # Add a field-to-table mapping for clarity
+            field_to_table = {}
+            for table in allowed_tables:
+                meta = db_tables.get(table, {})
+                for field in meta.get("fields", []):
+                    field_to_table.setdefault(field, []).append(table)
+            if field_to_table:
+                lines.append("FIELD TO TABLE MAPPING:")
+                for field, tables in sorted(field_to_table.items()):
+                    lines.append(f"- {field}: {', '.join(tables)}")
         # Add a single, clear join example if available
         if extra_examples and len(extra_examples) > 0:
             lines.append("Example join:")
             lines.append(extra_examples[0])
         join_lines = []
-        for table, meta in self.schema_cfg.get("tables", {}).items():
+        db_tables = self.schema_cfg.get(db, {}).get("tables", {})
+        for table, meta in db_tables.items():
             if allowed_tables and table not in allowed_tables:
                 continue
             for join in meta.get("joins", []):
@@ -96,10 +108,11 @@ class PromptBuilder:
         return prompt
 
     def build_custom_table_info(
-        self, allowed_tables: Optional[List[str]] = None
+        self, allowed_tables: Optional[List[str]] = None, db: str = 'live'
     ) -> Dict[str, str]:
         info = {}
-        for table, meta in self.schema_cfg.get("tables", {}).items():
+        db_tables = self.schema_cfg.get(db, {}).get("tables", {})
+        for table, meta in db_tables.items():
             if allowed_tables and table not in allowed_tables:
                 continue
             custom = meta.get("customInfo")
@@ -166,16 +179,18 @@ class PromptBuilder:
                         and "to_field" in join
                     ), f"Invalid join format in {table}"
 
-    def build_mini_schema(self, tables: list) -> dict:
-        mini = {"tables": {}}
+    def get_table_meta(self, table: str, db: str = 'live') -> dict:
+        return self.schema_cfg.get(db, {}).get('tables', {}).get(table, {})
+
+    def build_mini_schema(self, tables: List[str], db: str = 'live') -> dict:
+        mini = {'tables': {}}
         for table in tables:
-            if table in self.schema_cfg["tables"]:
-                mini["tables"][table] = {
-                    "fields": self.schema_cfg["tables"][table]["fields"],
-                    "joins": [
-                        j for j in self.schema_cfg["tables"][table].get("joins", [])
-                        if j["to_table"] in tables
-                    ]
+            table_meta = self.get_table_meta(table, db)
+            if table_meta:
+                mini['tables'][table] = {
+                    'fields': table_meta.get('fields', []),
+                    'joins': table_meta.get('joins', []),
+                    'description': table_meta.get('description', '')
                 }
         return mini
 

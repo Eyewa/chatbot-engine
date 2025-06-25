@@ -24,27 +24,27 @@ def validate_schema_yaml(path: str) -> Dict[str, Any]:
             data = json.load(jf)
 
     assert isinstance(data, dict), "❌ Top-level YAML structure must be a dictionary"
-    assert "tables" in data, "❌ Missing 'tables' key in schema"
-    assert isinstance(data["tables"], dict), "❌ 'tables' must be a dictionary"
-
-    for table, meta in data["tables"].items():
-        assert isinstance(meta, dict), f"❌ Table '{table}' definition must be a dictionary"
-        assert "fields" in meta, f"❌ Missing 'fields' for table: {table}"
-        assert isinstance(meta["fields"], list), f"❌ 'fields' in {table} must be a list"
-        for field in meta["fields"]:
-            assert isinstance(field, str), f"❌ Each field in {table} must be a string"
-
-        if "joins" in meta:
-            assert isinstance(meta["joins"], list), f"❌ 'joins' in {table} must be a list"
-        for join in meta["joins"]:
-            assert isinstance(join, dict), f"❌ Each join in {table} must be a dictionary"
-            assert all(k in join for k in ["from_field", "to_table", "to_field"]), (
-                f"❌ Each join in {table} must contain 'from_field', 'to_table', and 'to_field'"
-            )
-
-        if "customInfo" in meta:
-            assert isinstance(meta["customInfo"], str), f"❌ customInfo in {table} must be a string"
-
+    assert any(k in data for k in ("live", "common")), "❌ Missing 'live' or 'common' key in schema"
+    for db_key in ("live", "common"):
+        if db_key in data:
+            db = data[db_key]
+            assert "tables" in db, f"❌ Missing 'tables' key in {db_key}"
+            assert isinstance(db["tables"], dict), f"❌ 'tables' in {db_key} must be a dictionary"
+            for table, meta in db["tables"].items():
+                assert isinstance(meta, dict), f"❌ Table '{table}' definition in {db_key} must be a dictionary"
+                assert "fields" in meta, f"❌ Missing 'fields' for table: {table} in {db_key}"
+                assert isinstance(meta["fields"], list), f"❌ 'fields' in {table} must be a list"
+                for field in meta["fields"]:
+                    assert isinstance(field, str), f"❌ Each field in {table} must be a string"
+                if "joins" in meta:
+                    assert isinstance(meta["joins"], list), f"❌ 'joins' in {table} must be a list"
+                    for join in meta["joins"]:
+                        assert isinstance(join, dict), f"❌ Each join in {table} must be a dictionary"
+                        assert all(k in join for k in ["from_field", "to_table", "to_field"]), (
+                            f"❌ Each join in {table} must contain 'from_field', 'to_table', and 'to_field'"
+                        )
+                if "customInfo" in meta:
+                    assert isinstance(meta["customInfo"], str), f"❌ customInfo in {table} must be a string"
     logging.info("✅ schema.yaml is valid and well-structured!")
     return data
 

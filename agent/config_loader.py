@@ -120,9 +120,11 @@ class ConfigLoader:
         return any(keyword in query_lower for keyword in requires_ledger_keywords)
     
     def get_database_tables(self, db_name: str) -> List[str]:
-        """Get tables for a specific database."""
-        databases = self.get_databases()
-        return databases.get(db_name, {}).get("tables", [])
+        """Get tables for a specific database from schema.yaml."""
+        schema = self.get_schema()
+        db = schema.get(db_name, {})
+        tables = db.get("tables", {})
+        return list(tables.keys())
 
 
 # Global config loader instance
