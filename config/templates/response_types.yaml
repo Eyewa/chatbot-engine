@@ -1,6 +1,7 @@
 orders_summary:
   fields:
     - orders
+    - customer_name
 
 loyalty_summary:
   fields:

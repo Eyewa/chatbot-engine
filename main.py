@@ -323,6 +323,8 @@ def create_app() -> FastAPI:
             result = agent.invoke({"input": request.input, "chat_history": history})
             logging.info(f"[CHAT] Raw agent result: {result}")
             logging.debug(f"[CHAT] Raw agent result type: {type(result)}")
+            # --- ADDED: Print full agent result before parsing ---
+            logging.debug(f"[CHAT] FULL agent result BEFORE parsing: {json.dumps(result, default=str)}")
             # --- Robust parsing, routing, and filtering ---
             summaries = []
             logging.debug(f"[CHAT] Entering summary parsing block. Result type: {type(result)}")
@@ -455,6 +457,7 @@ def create_app() -> FastAPI:
                 logging.warning(f"⚠️ Could not save chat history: {e}")
 
             # After processing all summaries
+            # --- ADDED: Print summaries list before output construction ---
             logging.debug(f"[CHAT] Summaries list before output construction: {summaries}")
             if len(summaries) > 1:
                 message = generate_llm_message(summaries, ChatOpenAI(model="gpt-4o", temperature=0))
