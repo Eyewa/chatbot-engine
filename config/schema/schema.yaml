@@ -5,6 +5,13 @@ live:
     customer_entity:
       description: Customer profile information.
       fields: [entity_id, firstname, middlename, lastname, email, mobile_number, store_id, country_code]
+      field_meta:
+        firstname:
+          businessContext: Customer's first name
+        middlename:
+          businessContext: Customer's middle name (if any)
+        lastname:
+          businessContext: Customer's last name
       joins:
         - to_table: sales_order
           from_field: entity_id
@@ -26,23 +33,14 @@ live:
         - For orders_summary, use:
           - order_id = increment_id
           - order_amount = grand_total
-          - customer_name = customer_firstname || ' ' || customer_lastname
         - For 'last N orders', use ORDER BY created_at DESC LIMIT N.
       fields:
         - entity_id
         - increment_id
         - customer_id
-        - customer_firstname
-        - customer_lastname
-        - customer_email
         - grand_total
         - status
         - created_at
-      field_meta:
-        customer_firstname:
-          businessContext: Combine with customer_lastname for customer_name.
-        customer_lastname:
-          businessContext: Combine with customer_firstname for customer_name.
       joins:
         - to_table: customer_entity
           from_field: customer_id

@@ -57,7 +57,7 @@ class PromptBuilder:
         types = ", ".join(self.response_cfg.keys())
         lines = [
             "You are Winkly, a structured data assistant for customer and order data. Use only the schema and rules below.",
-            "Rules:"
+            "Rules:",
             "- Use only the tables and fields listed below. Never invent or guess columns, tables, or values.",
             "- If the user requests a field or table not listed below, respond with an error message indicating the field/table does not exist.",
             "- For order history, use sales_order.increment_id as the order ID. Only use customer_loyalty_ledger.order_id for loyalty transactions, and join to sales_order.increment_id if order details are needed.",
@@ -68,6 +68,7 @@ class PromptBuilder:
             "- Always return valid JSON with double quotes. No code blocks, no SQL, no prose.",
             "- Output must match one of the allowed response_types. Top-level key must be 'type'.",
             f"- Valid types: {types}.",
+            "- Customer information (name, email, etc.) must always be fetched from the customer_entity table, not from sales_order.",
         ]
         if allowed_tables:
             lines.append(f"Database: `{db}`. Allowed tables: {', '.join(allowed_tables)}.")
