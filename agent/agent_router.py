@@ -418,22 +418,47 @@ def _handle_both(input_dict):
 
     result = _combine_responses(live_resp, common_resp)
 
-    # If both live and common are present, merge for summary and data
+    # GENERIC: Collect all valid summaries present in the result
+    data = []
+    seen_types = set()
+    # Helper to add summary if valid
+    def add_summary(summary):
+        if isinstance(summary, dict) and summary.get('type'):
+            data.append(summary)
+            seen_types.add(summary['type'])
+        elif isinstance(summary, list):
+            for s in summary:
+                if isinstance(s, dict) and s.get('type'):
+                    data.append(s)
+                    seen_types.add(s['type'])
     if isinstance(result, dict) and 'live' in result and 'common' in result:
-        data = []
-        if isinstance(result['live'], dict):
-            data.append(result['live'])
-        if isinstance(result['common'], dict):
-            data.append(result['common'])
-        # Generate summary for both
-        summary = generate_llm_message(data, ChatOpenAI(model="gpt-4o", temperature=0))
-        return {"message": summary, "data": data}
+        add_summary(result['live'])
+        add_summary(result['common'])
     else:
-        # Handle single branch as before
-        if isinstance(result, dict) and 'type' in result:
-            summary = generate_llm_message([result], ChatOpenAI(model="gpt-4o", temperature=0))
-            return {"message": summary, "data": [result]}
-        return result
+        add_summary(result)
+
+    # Load all possible types from response_types.yaml
+    try:
+        from simple_yaml import safe_load
+        import os
+        schema_path = os.path.join("config", "templates", "response_types.yaml")
+        with open(schema_path) as f:
+            response_types = safe_load(f)
+        all_types = set(response_types.keys())
+    except Exception as e:
+        logging.warning("[_handle_both] Could not load response_types.yaml: %s", e)
+        all_types = set()
+
+    # Debug log: which types are present and which are missing
+    logging.debug(f"[_handle_both] Summary types present: {seen_types}")
+    if all_types:
+        missing_types = all_types - seen_types
+        if missing_types:
+            logging.debug(f"[_handle_both] Summary types missing in combined data: {missing_types}")
+
+    # Generate summary for all present summaries
+    summary = generate_llm_message(data, ChatOpenAI(model="gpt-4o", temperature=0))
+    return {"message": summary, "data": data}
 
 
 # -------------------------
