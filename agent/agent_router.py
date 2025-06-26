@@ -305,7 +305,7 @@ def _combine_responses(resp_live, resp_common):
         "live": cleaned_live,
         "common": cleaned_common,
     }
-    logging.info(f"[_combine_responses] Returning merged: {merged}")
+    logging.info(f"[_combine_responses] FULL combined result before output: {merged}")
     return merged
 
 
@@ -458,7 +458,9 @@ def _handle_both(input_dict):
 
     # Generate summary for all present summaries
     summary = generate_llm_message(data, ChatOpenAI(model="gpt-4o", temperature=0))
-    return {"message": summary, "data": data}
+    merged = {"message": summary, "data": data}
+    logging.info(f"[_handle_both] FULL combined result before output: {merged}")
+    return merged
 
 
 # -------------------------

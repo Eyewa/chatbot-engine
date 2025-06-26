@@ -10,6 +10,7 @@ from tools.sql_toolkit_factory import (
     get_common_query_tool,
 )
 from .prompt_builder import PromptBuilder
+from agent.dynamic_sql_builder import load_schema, build_dynamic_sql, get_field_alias
 
 try:
     import yaml
@@ -27,92 +28,78 @@ def _build_sql(table: str, fields: List[str], filters: Dict[str, Any] = {}) -> s
     return sql
 
 
+# Stub for DB execution (replace with your real DB toolkit)
+def run_sql_query(sql: str, db: str = "live") -> list:
+    # TODO: Replace with actual DB execution logic
+    logging.info(f"[DB] Would execute on db={db}: {sql}")
+    # Return dummy data for demo
+    return [
+        {"order_id": 2000581581, "order_amount": 149.0, "status": "closed", "created_at": "2025-06-22T13:35:40", "firstname": "John", "lastname": "Doe"},
+        {"order_id": 17000117627, "order_amount": 159.0, "status": "closed", "created_at": "2024-08-05T12:19:07", "firstname": "Jane", "lastname": "Smith"}
+    ]
+
+
 def orchestrate(query: str) -> Dict[str, Any]:
     logging.info(f"🧠 Received query: {query}")
     classification: Dict[str, Any] = classify(query)
     logging.info(f"🏷️ Classifier output: {classification}")
 
-    # Extract relevant tables from intent registry
     registry = config_loader.get_intent_registry()
-    relevant_tables = set()
-    for intent in classification.get("intent", []):
-        subs = classification.get("sub_intents", {}).get(intent, [])
-        for sub in subs:
-            cfg = registry.get(intent, {}).get(sub)
-            if cfg and "table" in cfg:
-                relevant_tables.add(cfg["table"])
-    relevant_tables = list(relevant_tables)
+    schema = load_schema(db_key="live")
+    llm_struct = classification.get('llm_struct')
+    if not llm_struct:
+        return {"type": "text_response", "message": "LLM did not extract fields. Please try again."}
 
-    # Build mini-schema prompt
-    builder = PromptBuilder()
-    mini_prompt = builder.build_system_prompt_with_mini_schema(
-        db="eyewa_live", relevant_tables=relevant_tables
-    )
-    logging.info(f"[Mini-schema prompt for LLM]:\n{mini_prompt}")
+    main_table = llm_struct['main_table']
+    user_fields = llm_struct['fields']
+    filters = llm_struct.get('filters', {})
+    limit = llm_struct.get('limit', 10)
 
-    live_tool = get_live_query_tool()
-    common_tool = get_common_query_tool()
+    # Map user-friendly fields to real fields using schema
+    expanded_fields = []
+    for field in user_fields:
+        expanded_fields.extend(get_field_alias(main_table, field, schema))
+    logging.info(f"[Field Mapping] User fields: {user_fields} -> Expanded fields: {expanded_fields}")
 
-    results: Dict[str, Any] = {}
-    raw_sqls: Dict[str, str] = {}
+    sql = build_dynamic_sql(user_fields, main_table, filters, limit, schema)
+    logging.info(f"[Dynamic SQL]: {sql}")
 
-    # Get intent registry from configuration
-    schema = config_loader.get_schema()
-    db_tables = schema.get('tables', {})
-
-    for intent in classification.get("intent", []):
-        subs = classification.get("sub_intents", {}).get(intent, [])
-        for sub in subs:
-            cfg = registry.get(intent, {}).get(sub)
-            if not cfg:
-                logging.warning(f"⚠️ No config for {intent}.{sub}")
-                continue
-
-            table = cfg.get("table")
-            db = cfg.get("db", "live")
-            # Only run query if table is allowed in the target DB
-            if db == "live":
-                allowed_tables = ["sales_order", "customer_entity", "order_meta_data", "sales_order_address", "sales_order_payment"]
-            else:
-                allowed_tables = ["customer_loyalty_card", "customer_loyalty_ledger", "customer_wallet"]
-            if table not in allowed_tables:
-                logging.error(f"Table {table} not allowed in db {db}, skipping {intent}.{sub}")
-                continue
-
-            sql = _build_sql(table, cfg.get("fields", []))
-            tool = live_tool if db == "live" else common_tool
-
-            if tool is None:
-                logging.error(f"❌ Tool not available for db: {db}")
-                continue
-
-            try:
-                logging.info(f"🚀 Running query for {intent}.{sub}: {sql}")
-                res = tool.run({"query": sql})
-                results[f"{intent}.{sub}"] = res
-                raw_sqls[f"{intent}.{sub}"] = sql
-            except Exception as exc:
-                logging.error(f"❌ Query failed for {intent}.{sub}: {exc}")
-                results[f"{intent}.{sub}"] = {"error": str(exc)}
-
-    # Format response into mixed_summary
-    orders_data = {}
-    loyalty_data = {}
-
-    for k, v in results.items():
-        if k.startswith("order."):
-            orders_data[k.split(".")[1]] = v
-        elif k.startswith("loyalty."):
-            loyalty_data[k.split(".")[1]] = v
-
-    if orders_data or loyalty_data:
+    try:
+        results = run_sql_query(sql, db="live")
+        # Post-process results: if customer_name was requested, combine firstname/lastname
+        for row in results:
+            if "firstname" in row and "lastname" in row:
+                row["customer_name"] = f"{row['firstname']} {row['lastname']}"
+        # Build response
         response = {
-            "type": "mixed_summary",
-            "orders": orders_data,
-            "loyalty": loyalty_data,
+            "type": "orders_summary",
+            "orders": [
+                {k: v for k, v in row.items() if k in expanded_fields or k == "customer_name" or k in ["order_id", "order_amount", "status", "created_at"]}
+                for row in results
+            ]
         }
-        logging.info(f"✅ Assembled mixed_summary: {json.dumps(response, indent=2)}")
         return response
+    except Exception as exc:
+        logging.error(f"[DB ERROR] {exc}")
+        return {"type": "text_response", "message": f"Query failed: {exc}"}
 
-    logging.warning(f"⚠️ No valid data found in any result: {results}")
-    return {"type": "text_response", "message": "No data found from either source"}
+# --- Usage Example ---
+if __name__ == "__main__":
+    # Simulate LLM output for: "Show last two orders and customer name for customer 1338787"
+    llm_struct = {
+        'main_table': 'sales_order',
+        'fields': ['order_id', 'order_amount', 'customer_name'],
+        'filters': {'customer_id': 1338787},
+        'limit': 2
+    }
+    schema = load_schema(db_key="live")
+    sql = build_dynamic_sql(llm_struct['fields'], llm_struct['main_table'], llm_struct['filters'], llm_struct['limit'], schema)
+    print("Generated SQL:")
+    print(sql)
+    # Demo DB call
+    results = run_sql_query(sql, db="live")
+    print("Results:")
+    print(results)
+    # Demo orchestrate
+    print("Orchestrate output:")
+    print(orchestrate("Show last two orders and customer name for customer 1338787"))
