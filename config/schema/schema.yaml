@@ -21,8 +21,28 @@ live:
 
     sales_order:
       description: Orders placed by customers.
-      customInfo: "links: customer_entity, payments"
-      fields: [entity_id, increment_id, customer_id, customer_firstname, customer_lastname, customer_email, grand_total, status, created_at]
+      customInfo: "links: customer_entity, sales_order_payment, sales_order_address, sales_order_item"
+      businessContext: |
+        - For orders_summary, use:
+          - order_id = increment_id
+          - order_amount = grand_total
+          - customer_name = customer_firstname || ' ' || customer_lastname
+        - For 'last N orders', use ORDER BY created_at DESC LIMIT N.
+      fields:
+        - entity_id
+        - increment_id
+        - customer_id
+        - customer_firstname
+        - customer_lastname
+        - customer_email
+        - grand_total
+        - status
+        - created_at
+      field_meta:
+        customer_firstname:
+          businessContext: Combine with customer_lastname for customer_name.
+        customer_lastname:
+          businessContext: Combine with customer_firstname for customer_name.
       joins:
         - to_table: customer_entity
           from_field: customer_id

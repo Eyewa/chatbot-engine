@@ -20,7 +20,7 @@ from agent.reload_config import router as reload_router
 
 from langchain_openai import ChatOpenAI
 from simple_yaml import safe_load
-from agent.utils import filter_response_by_type
+from agent.utils import filter_response_by_type, generate_llm_message
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -201,7 +201,24 @@ def filter_order_fields(orders, allowed_fields):
         ]
     return orders
 
+# ------------------------
+# Request and Response Models
+# ------------------------
+
+class ChatbotRequest(BaseModel):
+    input: str = Field(..., description="User's message to the chatbot")
+    chat_history: List[str] = Field(default_factory=list, description="Conversation history")
+    summarize: bool = Field(default=False, description="If true, response will be shortened if too long")
+    conversation_id: Optional[str] = Field(default=None, alias="conversationId", description="ID used to fetch previous messages")
+
+class ChatbotResponse(BaseModel):
+    output: Any = Field(..., description="Chatbot's concise reply (can be a dict or a list of dicts)")
+
+class ErrorResponse(BaseModel):
+    detail: str
+
 # Robust schema enforcement for all response types
+
 def enforce_response_schema(final, response_types):
     response_type = final.get("type")
     allowed_fields = set(response_types.get(response_type, {}).get("fields", []))
@@ -222,79 +239,6 @@ def enforce_response_schema(final, response_types):
         result["orders"] = filter_order_fields(result["orders"], allowed_order_fields)
     logging.debug(f"[enforce_response_schema] Returning: {result}")
     return result
-
-# ------------------------
-# Request and Response Models
-# ------------------------
-
-class ChatbotRequest(BaseModel):
-    input: str = Field(..., description="User's message to the chatbot")
-    chat_history: List[str] = Field(default_factory=list, description="Conversation history")
-    summarize: bool = Field(default=False, description="If true, response will be shortened if too long")
-    conversation_id: Optional[str] = Field(default=None, alias="conversationId", description="ID used to fetch previous messages")
-
-class ChatbotResponse(BaseModel):
-    output: Any = Field(..., description="Chatbot's concise reply (can be a dict or a list of dicts)")
-
-class ErrorResponse(BaseModel):
-    detail: str
-
-# ------------------------
-# Utilities
-# ------------------------
-
-def shorten_if_needed(output: str, max_tokens: int = 300) -> str:
-    if len(output) > 1500:
-        try:
-            llm = ChatOpenAI(model="gpt-4o", temperature=0)
-            system_msg = "Please rephrase the following response to be shorter, while keeping all important information intact."
-            final = llm.invoke([
-                {"role": "system", "content": system_msg},
-                {"role": "user", "content": output}
-            ])
-            if hasattr(final, "content"):
-                content = final.content
-                if isinstance(content, list):
-                    content = " ".join(str(x) for x in content)
-                return content
-            else:
-                return output
-        except Exception as e:
-            logging.warning("⚠️ Could not shorten output: %s", e)
-    return output
-
-def extract_final_output(raw_output: str) -> str:
-    """Return the clean JSON block from agent output, filtered by response_types.yaml."""
-    try:
-        parsed = json.loads(raw_output)
-        filtered = filter_response_by_type(parsed)
-        return json.dumps(filtered)
-    except Exception as e:
-        logging.warning("⚠️ Could not parse structured output: %s", e)
-        return raw_output.strip()
-
-def generate_llm_message(output, llm):
-    prompt = (
-        "Given the following structured data, write a friendly, concise summary for the user. "
-        "If the data is empty or no results were found, say so clearly.\n\n"
-        f"DATA:\n{json.dumps(output, indent=2)}\n"
-    )
-    if isinstance(output, dict) and "extras" in output:
-        prompt += (
-            "\nIf there is an 'extras' field, naturally include its information in the summary as if it were part of the main answer. "
-            "Do not mention the word 'extras' or that it is an extra detail—just present the information conversationally."
-        )
-    try:
-        resp = llm.invoke([
-            {"role": "system", "content": "You are a helpful assistant."},
-            {"role": "user", "content": prompt}
-        ])
-        if hasattr(resp, "content"):
-            return str(resp.content)
-        return str(resp)
-    except Exception as e:
-        logging.warning(f"⚠️ Could not generate LLM message: {e}")
-        return "I'm sorry, I couldn't summarize the data."
 
 # ------------------------
 # FastAPI App Setup
@@ -372,44 +316,107 @@ def create_app() -> FastAPI:
             logging.info(f"[CHAT] Classifier prediction: {intent}")
             result = agent.invoke({"input": request.input, "chat_history": history})
             logging.info(f"[CHAT] Raw agent result: {result}")
-
+            logging.debug(f"[CHAT] Raw agent result type: {type(result)}")
             # --- Robust parsing, routing, and filtering ---
             summaries = []
             logging.debug(f"[CHAT] Entering summary parsing block. Result type: {type(result)}")
+            logging.debug(f"[CHAT] Raw agent result (repr): {repr(result)}")
             if isinstance(result, dict) and "live" in result and "common" in result:
-                live = parse_agent_output(result["live"]) or {}
-                logging.debug(f"[CHAT] Parsed live: {live}")
-                common = parse_agent_output(result["common"]) or {}
-                logging.debug(f"[CHAT] Parsed common: {common}")
+                live = parse_agent_output(result["live"])
+                logging.debug(f"[CHAT] Parsed live: {live} (type={type(live)})")
+                logging.debug(f"[CHAT] Parsed live keys: {list(live.keys()) if isinstance(live, dict) else 'N/A'}")
+                common = parse_agent_output(result["common"])
+                logging.debug(f"[CHAT] Parsed common: {common} (type={type(common)})")
+                logging.debug(f"[CHAT] Parsed common keys: {list(common.keys()) if isinstance(common, dict) else 'N/A'}")
                 for summary in (live, common):
                     merged = summary if isinstance(summary, dict) else {}
+                    logging.debug(f"[CHAT] Merged summary: {merged} (type={type(merged)})")
                     merged = flatten_orders_field(merged)
+                    logging.debug(f"[CHAT] After flatten_orders_field: {merged}")
                     allowed_fields = set(RESPONSE_TYPES.get(merged.get("type"), {}).get("fields", [])) if isinstance(merged, dict) else set()
+                    logging.debug(f"[CHAT] Allowed fields (type={merged.get('type', None)}): {allowed_fields}")
                     merged = flatten_allowed_fields(merged, allowed_fields)
                     logging.debug(f"[CHAT] After flatten_allowed_fields: {merged}")
                     final = unwrap_message_dicts(merged)
+                    logging.debug(f"[CHAT] After unwrap_message_dicts: {final}")
                     final = enforce_response_schema(final, RESPONSE_TYPES)
                     logging.debug(f"[CHAT] Final schema-enforced response: {final}")
-                    if final and isinstance(final, dict) and final.get("type") and len(final) > 1:
+                    if final and isinstance(final, dict) and final.get("type"):
                         summaries.append(final)
+                    else:
+                        logging.debug(f"[CHAT] Skipping summary as it did not pass final checks: {final}")
                 if not summaries:
+                    logging.debug("[CHAT] No valid summaries found after processing live/common. Triggering fallback message.")
                     summaries = [{"type": "text_response", "message": "No data found from either source."}]
                 output = summaries if len(summaries) > 1 else summaries[0]
+                logging.debug(f"[CHAT] Output after processing live/common: {output}")
             else:
                 if isinstance(result, dict) and "output" in result:
-                    single = parse_agent_output(result["output"]) or {}
+                    single = parse_agent_output(result["output"])
+                    logging.debug(f"[CHAT] Parsed single from 'output': {single} (type={type(single)})")
                 else:
-                    single = parse_agent_output(result) or {}
-                logging.debug(f"[CHAT] Parsed single: {single}")
-                merged = single if isinstance(single, dict) else {}
-                merged = flatten_orders_field(merged)
-                allowed_fields = set(RESPONSE_TYPES.get(merged.get("type"), {}).get("fields", [])) if isinstance(merged, dict) else set()
-                merged = flatten_allowed_fields(merged, allowed_fields)
-                logging.debug(f"[CHAT] After flatten_allowed_fields: {merged}")
-                final = unwrap_message_dicts(merged)
-                final = enforce_response_schema(final, RESPONSE_TYPES)
-                logging.debug(f"[CHAT] Final schema-enforced response: {final}")
-                output = final
+                    single = parse_agent_output(result)
+                    logging.debug(f"[CHAT] Parsed single from result: {single} (type={type(single)})")
+                logging.debug(f"[CHAT] Single keys: {list(single.keys()) if isinstance(single, dict) else 'N/A'}")
+
+                # --- UNWRAP PATCH: unwrap nested 'data' if present ---
+                if (
+                    isinstance(single, dict)
+                    and "data" in single
+                    and isinstance(single["data"], dict)
+                    and "data" in single["data"]
+                    and isinstance(single["data"]["data"], list)
+                ):
+                    logging.debug("[CHAT] Unwrapping nested 'data' key in single.")
+                    single["data"] = single["data"]["data"]
+
+                # --- PATCH START: handle list of summaries in 'data' key ---
+                if isinstance(single, dict) and "data" in single and isinstance(single["data"], list):
+                    logging.debug(f"[CHAT] Detected 'data' key with list of summaries: {single['data']} (type={type(single['data'])})")
+                    summaries = []
+                    for idx, summary in enumerate(single["data"]):
+                        logging.debug(f"[CHAT] Processing summary #{idx}: {summary} (type={type(summary)})")
+                        merged = summary if isinstance(summary, dict) else {}
+                        logging.debug(f"[CHAT] Merged summary #{idx}: {merged}")
+                        merged = flatten_orders_field(merged)
+                        logging.debug(f"[CHAT] After flatten_orders_field for summary #{idx}: {merged}")
+                        allowed_fields = set(RESPONSE_TYPES.get(merged.get("type"), {}).get("fields", [])) if isinstance(merged, dict) else set()
+                        logging.debug(f"[CHAT] Allowed fields for summary #{idx} (type={merged.get('type')}): {allowed_fields}")
+                        missing_fields = allowed_fields - set(merged.keys()) if isinstance(merged, dict) else set()
+                        logging.debug(f"[CHAT] Missing allowed fields for summary #{idx}: {missing_fields}")
+                        merged = flatten_allowed_fields(merged, allowed_fields)
+                        logging.debug(f"[CHAT] After flatten_allowed_fields for summary #{idx}: {merged}")
+                        final = unwrap_message_dicts(merged)
+                        logging.debug(f"[CHAT] After unwrap_message_dicts for summary #{idx}: {final}")
+                        final = enforce_response_schema(final, RESPONSE_TYPES)
+                        logging.debug(f"[CHAT] Final schema-enforced response for summary #{idx}: {final}")
+                        if final and isinstance(final, dict) and final.get("type"):
+                            summaries.append(final)
+                        else:
+                            logging.debug(f"[CHAT] Skipping summary #{idx} as it did not pass final checks: {final}")
+                    if not summaries:
+                        logging.debug("[CHAT] No valid summaries found after processing all items in 'data'. Triggering fallback message.")
+                        logging.debug(f"[CHAT] Context at fallback: single={single}, summaries={summaries}")
+                        summaries = [{"type": "text_response", "message": "No data found from either source."}]
+                    logging.debug(f"[CHAT] Output after processing all summaries: {summaries if len(summaries) > 1 else summaries[0]}")
+                    output = summaries if len(summaries) > 1 else summaries[0]
+                else:
+                    logging.debug(f"[CHAT] No 'data' key with list found. Processing as single summary.")
+                    merged = single if isinstance(single, dict) else {}
+                    logging.debug(f"[CHAT] Merged single: {merged}")
+                    merged = flatten_orders_field(merged)
+                    logging.debug(f"[CHAT] After flatten_orders_field: {merged}")
+                    allowed_fields = set(RESPONSE_TYPES.get(merged.get("type"), {}).get("fields", [])) if isinstance(merged, dict) else set()
+                    logging.debug(f"[CHAT] Allowed fields for single (type={merged.get('type')}): {allowed_fields}")
+                    merged = flatten_allowed_fields(merged, allowed_fields)
+                    logging.debug(f"[CHAT] After flatten_allowed_fields: {merged}")
+                    final = unwrap_message_dicts(merged)
+                    logging.debug(f"[CHAT] After unwrap_message_dicts: {final}")
+                    final = enforce_response_schema(final, RESPONSE_TYPES)
+                    logging.debug(f"[CHAT] Final schema-enforced response: {final}")
+                    if not final or not isinstance(final, dict) or not final.get("type"):
+                        logging.debug(f"[CHAT] Fallback triggered: final output is missing or has no type. Context: merged={merged}, final={final}, single={single}")
+                    output = final
 
             # Save to history
             try:
@@ -443,6 +450,7 @@ def create_app() -> FastAPI:
                     output = {"message": message}
             logging.info(f"[CHAT] Final conversational response: {output}")
 
+            logging.debug(f"[CHAT] Final output structure before return: {output} (type={type(output)})")
             return ChatbotResponse(output=output)
 
         except Exception as e:

@@ -57,7 +57,7 @@ class PromptBuilder:
         types = ", ".join(self.response_cfg.keys())
         lines = [
             "You are Winkly, a structured data assistant for customer and order data. Use only the schema and rules below.",
-            "Rules:",
+            "Rules:"
             "- Use only the tables and fields listed below. Never invent or guess columns, tables, or values.",
             "- If the user requests a field or table not listed below, respond with an error message indicating the field/table does not exist.",
             "- For order history, use sales_order.increment_id as the order ID. Only use customer_loyalty_ledger.order_id for loyalty transactions, and join to sales_order.increment_id if order details are needed.",
@@ -76,13 +76,31 @@ class PromptBuilder:
             db_tables = self.schema_cfg.get(schema_db_key, {}).get("tables", {})
             for table in allowed_tables:
                 meta = db_tables.get(table, {})
+                # Short field list
+                fields = meta.get("fields", [])
+                field_list = ", ".join(fields)
+                table_line = f"- `{table}`: [{field_list}]"
+                # Concise business context (table-level)
+                business_ctx = meta.get("businessContext")
+                desc = meta.get("description")
                 custom = meta.get("customInfo")
-                if custom:
-                    table_info.append(f"- `{table}`: {custom}")
-                else:
-                    fields = meta.get("fields", [])
-                    field_list = ", ".join(fields)
-                    table_info.append(f"- `{table}`: [ALLOWED FIELDS: {field_list}]")
+                # Prefer businessContext, then customInfo, then short description
+                if business_ctx:
+                    ctx_lines = [l.strip() for l in business_ctx.splitlines() if l.strip()]
+                    table_line += "\n  " + "\n  ".join(ctx_lines)
+                elif custom:
+                    table_line += f"\n  (Note: {custom})"
+                elif desc and len(desc) <= 80:
+                    table_line += f"\n  {desc}"
+                # Column-level business context (only for special fields)
+                field_meta = meta.get("field_meta", {})
+                for field in fields:
+                    col_ctx = None
+                    if field_meta and field in field_meta:
+                        col_ctx = field_meta[field].get("businessContext")
+                    if col_ctx and len(col_ctx) <= 80:
+                        table_line += f"\n    {field}: {col_ctx}"
+                table_info.append(table_line)
             if table_info:
                 lines.append("ALLOWED TABLES AND FIELDS:")
                 lines.extend(table_info)

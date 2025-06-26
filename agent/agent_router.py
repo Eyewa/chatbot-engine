@@ -42,7 +42,7 @@ except Exception:
 from tools.sql_toolkit_factory import get_live_sql_tools, get_common_sql_tools
 from agent.prompt_builder import PromptBuilder
 from agent.config_loader import config_loader
-from agent.utils import filter_response_by_type
+from agent.utils import filter_response_by_type, extract_last_n, generate_llm_message
 
 # -------------------------
 # CLASSIFIER & INTENT
@@ -268,6 +268,26 @@ def _combine_responses(resp_live, resp_common):
         cleaned_live = filter_response_by_type(cleaned_live)
     cleaned_common = deep_clean_json_blocks(common_data)
     if isinstance(cleaned_common, dict):
+        # --- GENERIC PATCH: flatten any list of dicts for allowed fields ---
+        summary_type = cleaned_common.get("type")
+        allowed_fields = set()
+        if summary_type:
+            try:
+                from simple_yaml import safe_load
+                import os
+                schema_path = os.path.join("config", "templates", "response_types.yaml")
+                with open(schema_path) as f:
+                    response_types = safe_load(f)
+                allowed_fields = set(response_types.get(summary_type, {}).get("fields", []))
+            except Exception as e:
+                logging.warning(f"[GENERIC FLATTEN] Could not load response_types.yaml: {e}")
+        # For each key in cleaned_common, if it's a list of dicts, flatten the first dict's allowed fields
+        for key, value in list(cleaned_common.items()):
+            if isinstance(value, list) and value and isinstance(value[0], dict):
+                for field in allowed_fields:
+                    if field in value[0]:
+                        cleaned_common[field] = value[0][field]
+                cleaned_common.pop(key, None)
         cleaned_common = filter_response_by_type(cleaned_common)
 
     # If both are empty or None
@@ -331,11 +351,27 @@ def extract_focused_prompt(user_query, db):
         return None
 
 
+def inject_limit_phrase(prompt, limit):
+    import re
+    # Only inject if not already present
+    if not re.search(r"(last|recent)\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+(order|orders|record|records)", prompt, re.IGNORECASE):
+        # Try to keep the rest of the prompt, just prepend
+        if "order" in prompt:
+            # If 'of' is present, keep the rest
+            return f"last {limit} orders {prompt[prompt.find('of'):].strip()}" if "of" in prompt else f"last {limit} orders {prompt}"
+        else:
+            return f"last {limit} records {prompt}"
+    return prompt
+
+
 def _handle_both(input_dict):
     logging.info(f"[_handle_both] input_dict: {input_dict}")
     logging.info("🔀 Handling BOTH agent path")
     input_text = input_dict.get("input", "")
     history = input_dict.get("chat_history", [])
+
+    # Pre-process for 'last N' or 'recent N'
+    limit_n = extract_last_n(input_text)
 
     # Extract focused prompts for each DB
     live_prompt = extract_focused_prompt(input_text, db="live")
@@ -358,6 +394,12 @@ def _handle_both(input_dict):
             "chat_history": history,
         },
     }
+    if limit_n:
+        sub_inputs["live"]["limit"] = limit_n
+        sub_inputs["common"]["limit"] = limit_n
+        # Rewrite input to include 'last N orders' if not already present
+        sub_inputs["live"]["input"] = inject_limit_phrase(sub_inputs["live"]["input"], limit_n)
+        sub_inputs["common"]["input"] = inject_limit_phrase(sub_inputs["common"]["input"], limit_n)
 
     try:
         live_resp = live_agent.invoke(sub_inputs["live"])
@@ -374,7 +416,24 @@ def _handle_both(input_dict):
         logging.error("[_handle_both] Error fetching data from both sources.")
         return {"type": "text_response", "message": "There was an error fetching data from both sources."}
 
-    return _combine_responses(live_resp, common_resp)
+    result = _combine_responses(live_resp, common_resp)
+
+    # If both live and common are present, merge for summary and data
+    if isinstance(result, dict) and 'live' in result and 'common' in result:
+        data = []
+        if isinstance(result['live'], dict):
+            data.append(result['live'])
+        if isinstance(result['common'], dict):
+            data.append(result['common'])
+        # Generate summary for both
+        summary = generate_llm_message(data, ChatOpenAI(model="gpt-4o", temperature=0))
+        return {"message": summary, "data": data}
+    else:
+        # Handle single branch as before
+        if isinstance(result, dict) and 'type' in result:
+            summary = generate_llm_message([result], ChatOpenAI(model="gpt-4o", temperature=0))
+            return {"message": summary, "data": [result]}
+        return result
 
 
 # -------------------------
