@@ -55,9 +55,16 @@ def generate_llm_message(output, llm):
             {"role": "system", "content": "You are a helpful assistant."},
             {"role": "user", "content": prompt}
         ])
-        if hasattr(resp, "content"):
-            return str(resp.content)
-        return str(resp)
+        
+        message = str(resp.content) if hasattr(resp, "content") else str(resp)
+
+        return {
+            "type": "text_response",
+            "message": message
+        }
     except Exception as e:
         logging.warning(f"⚠️ Could not generate LLM message: {e}")
-        return "I'm sorry, I couldn't summarize the data." 
+        return {
+            "type": "text_response",
+            "message": "I'm sorry, I couldn't summarize the data."
+        } 

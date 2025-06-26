@@ -37,6 +37,16 @@ def build_dynamic_sql(user_fields, main_table, filters, limit, schema):
     used_tables = {main_table}
     join_clauses = []
 
+    # Handle special composite fields first
+    if "customer_name" in user_fields:
+        select_fields.append("CONCAT(customer_entity.firstname, ' ', customer_entity.lastname) AS customer_name")
+        target_table = "customer_entity"
+        join_info = find_join_path(schema, main_table, target_table)
+        if join_info and target_table not in used_tables:
+            join_clauses.append(f"JOIN {target_table} ON {main_table}.{join_info['from_field']} = {target_table}.{join_info['to_field']}")
+            used_tables.add(target_table)
+        user_fields.remove("customer_name") # Avoid processing it again
+
     for field in user_fields:
         real_fields = get_field_alias(main_table, field, schema)
         for rf in real_fields:

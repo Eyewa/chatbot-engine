@@ -2,6 +2,7 @@ from __future__ import annotations
 import json
 import logging
 from typing import Dict, Any, List
+import ast
 
 from .classifier import classify
 from .config_loader import config_loader
@@ -28,15 +29,33 @@ def _build_sql(table: str, fields: List[str], filters: Dict[str, Any] = {}) -> s
     return sql
 
 
-# Stub for DB execution (replace with your real DB toolkit)
 def run_sql_query(sql: str, db: str = "live") -> list:
-    # TODO: Replace with actual DB execution logic
-    logging.info(f"[DB] Would execute on db={db}: {sql}")
-    # Return dummy data for demo
-    return [
-        {"order_id": 2000581581, "order_amount": 149.0, "status": "closed", "created_at": "2025-06-22T13:35:40", "firstname": "John", "lastname": "Doe"},
-        {"order_id": 17000117627, "order_amount": 159.0, "status": "closed", "created_at": "2024-08-05T12:19:07", "firstname": "Jane", "lastname": "Smith"}
-    ]
+    if db == "live":
+        toolkit = get_live_query_tool()
+    else:
+        toolkit = get_common_query_tool()
+
+    if not toolkit:
+        logging.error(f"Could not get toolkit for db={db}")
+        return []
+
+    logging.info(f"Executing SQL on {db}: {sql}")
+    try:
+        # The result from toolkit.db.run is a string representation of a list of dicts
+        result_str = toolkit.db.run(sql, include_columns=True)
+        logging.info(f"SQL result (raw string): {result_str}")
+        # The result string looks like '[{\'key\': \'value\'}]'. We need to evaluate it.
+        return ast.literal_eval(result_str)
+    except (ValueError, SyntaxError, AttributeError) as e:
+        logging.error(f"Could not execute or parse SQL result: {e}")
+        # Attempt to run without include_columns as a fallback for some versions
+        try:
+            result_str = toolkit.db.run(sql)
+            logging.info(f"SQL result (fallback raw string): {result_str}")
+            return ast.literal_eval(result_str)
+        except Exception as fallback_e:
+            logging.error(f"Fallback SQL execution failed: {fallback_e}")
+            return []
 
 
 def orchestrate(query: str) -> Dict[str, Any]:
@@ -66,15 +85,12 @@ def orchestrate(query: str) -> Dict[str, Any]:
 
     try:
         results = run_sql_query(sql, db="live")
-        # Post-process results: if customer_name was requested, combine firstname/lastname
-        for row in results:
-            if "firstname" in row and "lastname" in row:
-                row["customer_name"] = f"{row['firstname']} {row['lastname']}"
-        # Build response
+        # Build response based on original user fields, plus key identifiers
+        response_fields = set(user_fields) | {"order_id", "order_amount", "status", "created_at"}
         response = {
             "type": "orders_summary",
             "orders": [
-                {k: v for k, v in row.items() if k in expanded_fields or k == "customer_name" or k in ["order_id", "order_amount", "status", "created_at"]}
+                {k: v for k, v in row.items() if k in response_fields}
                 for row in results
             ]
         }
@@ -85,21 +101,6 @@ def orchestrate(query: str) -> Dict[str, Any]:
 
 # --- Usage Example ---
 if __name__ == "__main__":
-    # Simulate LLM output for: "Show last two orders and customer name for customer 1338787"
-    llm_struct = {
-        'main_table': 'sales_order',
-        'fields': ['order_id', 'order_amount', 'customer_name'],
-        'filters': {'customer_id': 1338787},
-        'limit': 2
-    }
-    schema = load_schema(db_key="live")
-    sql = build_dynamic_sql(llm_struct['fields'], llm_struct['main_table'], llm_struct['filters'], llm_struct['limit'], schema)
-    print("Generated SQL:")
-    print(sql)
-    # Demo DB call
-    results = run_sql_query(sql, db="live")
-    print("Results:")
-    print(results)
     # Demo orchestrate
     print("Orchestrate output:")
     print(orchestrate("Show last two orders and customer name for customer 1338787"))

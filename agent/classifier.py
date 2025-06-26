@@ -1,6 +1,11 @@
 from __future__ import annotations
 import re
 from typing import Dict, List, Any
+import yaml
+import os
+import logging
+import json
+from openai import OpenAI
 
 try:
     from langchain_openai import ChatOpenAI
@@ -10,6 +15,9 @@ try:
 except Exception:
     ChatOpenAI = None  # type: ignore
     Runnable = None  # type: ignore
+
+# Load the schema to provide context to the LLM
+from agent.dynamic_sql_builder import load_schema
 
 
 INTENT_HIERARCHY: Dict[str, List[str]] = {
@@ -55,6 +63,24 @@ _RULES: Dict[str, Dict[str, str]] = {
 }
 
 
+def _load_schema_for_prompt():
+    """Loads and formats the schema for the LLM prompt."""
+    path = os.path.join("config", "schema", "schema.yaml")
+    with open(path) as f:
+        schema = yaml.safe_load(f)
+    
+    # Format for prompt - just tables and fields are enough for the classifier
+    prompt_schema = {}
+    for db_key, db_schema in schema.items():
+        if "tables" in db_schema:
+            prompt_schema[db_key] = {}
+            for table_name, table_info in db_schema["tables"].items():
+                fields = table_info.get("fields", [])
+                aliases = list(table_info.get("field_aliases", {}).keys())
+                prompt_schema[db_key][table_name] = fields + aliases
+    return yaml.dump(prompt_schema, default_flow_style=False)
+
+
 def _rule_based(query: str) -> Dict[str, List[str]]:
     q = query.lower()
     result: Dict[str, List[str]] = {}
@@ -68,27 +94,53 @@ def _rule_based(query: str) -> Dict[str, List[str]]:
     return result
 
 
-def classify(query: str) -> Dict[str, Any]:
-    """Return detected intents and sub-intents for a query."""
-    if ChatOpenAI is not None:
-        try:
-            prompt = ChatPromptTemplate.from_messages(
-                [
-                    (
-                        "system",
-                        "You are a classifier. Given a user question, identify intents and sub-intents as JSON",
-                    ),
-                    ("user", "{input}"),
-                ]
-            )
-            parser = JsonOutputParser()
-            chain = prompt | ChatOpenAI(model="gpt-4o", temperature=0) | parser
-            resp = chain.invoke({"input": query})
-            if isinstance(resp, dict) and "intent" in resp:
-                return resp
-        except Exception:
-            pass
+prompt_template = """
+You are an expert at understanding user queries and extracting the necessary information to build a SQL query.
+Your goal is to identify the main table, all the fields the user is asking for, and any filters to apply.
 
-    mapping = _rule_based(query)
-    intents = list(mapping)
-    return {"intent": intents, "sub_intents": mapping}
+**Instructions:**
+1.  Identify the main subject of the query to determine the `main_table`.
+2.  List ALL fields the user is asking for. Be comprehensive. For example, if they ask for "customer name", you MUST include "customer_name" in the fields list. If they ask for "order amount", include "order_amount".
+3.  Extract any filters the user has specified. For example, "for customer 123" should become `{{"customer_id": 123}}`.
+4.  If the user specifies a number of records, extract it as the `limit`. For example, "last 5 orders" means a `limit` of 5. If not specified, default to 10.
+
+Now, provide the JSON output for the user query above.
+"""
+
+client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"), max_retries=3)
+
+
+def classify(query: str) -> Dict[str, Any]:
+    """
+    Uses an LLM to classify the user's query and extract key information.
+    """
+    schema = load_schema(db_key="live")
+    schema_str = str(schema)
+
+    # This is a placeholder for a more robust prompt formatting solution
+    # that injects the user query and schema into the template.
+    # For now, we simulate this by replacing placeholders.
+    user_prompt = f"User Query: {query}\n\nSchema:\n{schema_str}"
+    
+    full_prompt = f"{prompt_template}\n\n{user_prompt}"
+
+    logging.debug(f"[Classifier] Prompt to LLM:\n{full_prompt}")
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant that returns JSON."},
+                {"role": "user", "content": full_prompt}
+            ],
+            response_format={"type": "json_object"},
+            temperature=0,
+        )
+        llm_output = response.choices[0].message.content
+        logging.debug(f"[Classifier] Raw LLM Output: {llm_output}")
+        if not llm_output:
+            raise ValueError("LLM returned an empty response.")
+        return json.loads(llm_output)
+    except Exception as e:
+        logging.error(f"[Classifier] Error during LLM call: {e}", exc_info=True)
+        return {"error": "Failed to classify query."}

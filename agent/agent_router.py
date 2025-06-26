@@ -5,6 +5,8 @@ import logging
 import re
 from typing import Optional, Any
 import os
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import Engine
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -43,6 +45,7 @@ from tools.sql_toolkit_factory import get_live_sql_tools, get_common_sql_tools
 from agent.prompt_builder import PromptBuilder
 from agent.config_loader import config_loader
 from agent.utils import filter_response_by_type, extract_last_n, generate_llm_message
+from agent.dynamic_sql_builder import load_schema, build_dynamic_sql, get_field_alias
 
 # -------------------------
 # CLASSIFIER & INTENT
@@ -134,7 +137,7 @@ def _build_agent(
     logging.info(f"[AGENT] Allowed tables: {allowed_tables}")
     logging.info(f"[AGENT] System prompt to LLM:\n{system_prompt}")
 
-    llm = ChatOpenAI(model="gpt-4o", temperature=0)
+    llm = ChatOpenAI(model="gpt-4o", temperature=0, max_retries=3)
     prompt = ChatPromptTemplate.from_messages(
         [
             ("system", system_prompt),
@@ -191,7 +194,7 @@ def _create_common_agent():
         allowed_tables=allowed,
         extra_examples=None
     )
-    llm = ChatOpenAI(model="gpt-4o", temperature=0)
+    llm = ChatOpenAI(model="gpt-4o", temperature=0, max_retries=3)
     prompt = ChatPromptTemplate.from_messages(
         [
             ("system", system_prompt),
@@ -224,15 +227,28 @@ def clean_agent_output(output):
 
 
 def deep_clean_json_blocks(obj):
-    # Recursively clean and parse all string values, including repeated code block unwrapping
+    """
+    Recursively finds and parses JSON blocks from strings.
+    Handles nested structures and repeated markdown fences.
+    """
     if isinstance(obj, str):
-        prev = obj
-        cleaned = clean_agent_output(prev)
-        # If cleaning returns a string, try again (handle nested code blocks)
-        while isinstance(cleaned, str) and cleaned != prev:
-            prev = cleaned
-            cleaned = clean_agent_output(prev)
-        return cleaned
+        # This regex finds a JSON object or array inside markdown code fences.
+        match = re.search(r"```(?:json)?\s*(\{.*\}|\[.*\])\s*```", obj, re.DOTALL)
+        if match:
+            json_str = match.group(1)
+            try:
+                # Once we've found a JSON block, parse it and recursively clean it.
+                return deep_clean_json_blocks(json.loads(json_str))
+            except json.JSONDecodeError:
+                # If parsing fails, just return the extracted string.
+                return json_str
+        # If no markdown block is found, try to parse the string as JSON directly.
+        # This handles cases where the string is just a JSON object without fences.
+        try:
+            return json.loads(obj)
+        except json.JSONDecodeError:
+            # If all else fails, return the original string.
+            return obj
     elif isinstance(obj, dict):
         return {k: deep_clean_json_blocks(v) for k, v in obj.items()}
     elif isinstance(obj, list):
@@ -250,13 +266,13 @@ def _combine_responses(resp_live, resp_common):
             return None
         # If it's a dict with 'output', clean it
         if isinstance(resp, dict) and 'output' in resp:
-            return clean_agent_output(resp['output'])
+            return deep_clean_json_blocks(resp['output'])
         # If it's a string, try to clean and parse
         if isinstance(resp, str):
-            return clean_agent_output(resp)
-        # If already dict/list, return as is
+            return deep_clean_json_blocks(resp)
+        # If already dict/list, apply deep clean
         if isinstance(resp, (dict, list)):
-            return resp
+            return deep_clean_json_blocks(resp)
         return None
 
     live_data = _parse(resp_live)
@@ -364,6 +380,32 @@ def inject_limit_phrase(prompt, limit):
     return prompt
 
 
+def get_engine(db_key: str) -> Engine:
+    # Map db_key to your real DB URIs
+    db_uris = {
+        "live": "mysql+pymysql://read_only:Aukdfduyje983idbj@db.eyewa.internal:3306/eyewa_live",
+        "common": "mysql+pymysql://read_only:Aukdfduyje983idbj@db.eyewa.internal:3306/eyewa_common"
+    }
+    uri = db_uris.get(db_key)
+    if not uri:
+        raise ValueError(f"Unknown db_key: {db_key}")
+    return create_engine(uri)
+
+
+def run_sql_query(sql: str, db: str = "live") -> list:
+    logging.info(f"[DB] Executing on db={db}: {sql}")
+    engine = get_engine(db)
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text(sql))
+            rows = [dict(row) for row in result]
+            logging.info(f"[DB] Query returned {len(rows)} rows.")
+            return rows
+    except Exception as exc:
+        logging.error(f"[DB ERROR] {exc}")
+        return []
+
+
 def _handle_both(input_dict):
     logging.info(f"[_handle_both] input_dict: {input_dict}")
     logging.info("🔀 Handling BOTH agent path")
@@ -416,51 +458,34 @@ def _handle_both(input_dict):
         logging.error("[_handle_both] Error fetching data from both sources.")
         return {"type": "text_response", "message": "There was an error fetching data from both sources."}
 
-    result = _combine_responses(live_resp, common_resp)
-
-    # GENERIC: Collect all valid summaries present in the result
+    combined = _combine_responses(live_resp, common_resp)
+    
+    # After combining, we might have a single summary dict, or a dict with {'live': {...}, 'common': {...}}
+    # We need to present this to the summarizer LLM.
     data = []
-    seen_types = set()
-    # Helper to add summary if valid
-    def add_summary(summary):
-        if isinstance(summary, dict) and summary.get('type'):
-            data.append(summary)
-            seen_types.add(summary['type'])
-        elif isinstance(summary, list):
-            for s in summary:
-                if isinstance(s, dict) and s.get('type'):
-                    data.append(s)
-                    seen_types.add(s['type'])
-    if isinstance(result, dict) and 'live' in result and 'common' in result:
-        add_summary(result['live'])
-        add_summary(result['common'])
+    if isinstance(combined, dict):
+        # Case 1: Both agents returned data, and it was merged
+        if "live" in combined and is_structured_response(combined.get("live")):
+            data.append(combined["live"])
+        if "common" in combined and is_structured_response(combined.get("common")):
+            data.append(combined["common"])
+        
+        # Case 2: Only one agent returned data, or they weren't merged into a nested dict
+        if not data and is_structured_response(combined):
+            data.append(combined)
+
+    logging.info(f"[_handle_both] Final data list for output: {data}")
+
+    if not data:
+        # Fallback to a generic message if no structured data was found
+        final_summary = {"type": "text_response", "message": "Could not retrieve structured data. Please try rephrasing your query."}
     else:
-        add_summary(result)
+        # Use a separate LLM call to summarize the final data
+        llm = ChatOpenAI(model="gpt-4o", temperature=0, max_retries=3)
+        final_summary = generate_llm_message(data, llm=llm)
 
-    # Load all possible types from response_types.yaml
-    try:
-        from simple_yaml import safe_load
-        import os
-        schema_path = os.path.join("config", "templates", "response_types.yaml")
-        with open(schema_path) as f:
-            response_types = safe_load(f)
-        all_types = set(response_types.keys())
-    except Exception as e:
-        logging.warning("[_handle_both] Could not load response_types.yaml: %s", e)
-        all_types = set()
-
-    # Debug log: which types are present and which are missing
-    logging.debug(f"[_handle_both] Summary types present: {seen_types}")
-    if all_types:
-        missing_types = all_types - seen_types
-        if missing_types:
-            logging.debug(f"[_handle_both] Summary types missing in combined data: {missing_types}")
-
-    # Generate summary for all present summaries
-    summary = generate_llm_message(data, ChatOpenAI(model="gpt-4o", temperature=0))
-    merged = {"message": summary, "data": data}
-    logging.info(f"[_handle_both] FULL combined result before output: {merged}")
-    return merged
+    logging.info(f"[_handle_both] FULL combined result before output: {final_summary}")
+    return final_summary
 
 
 # -------------------------
