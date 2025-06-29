@@ -391,25 +391,34 @@ def _combine_responses(resp_live, resp_common):
                             lastname = customer_data.get("lastname", "")
                             if firstname or lastname:
                                 customer_name = f"{firstname} {lastname}".strip()
-                                
-                                # Create customer_summary response
-                                customer_summary = {
-                                    "type": "customer_summary",
-                                    "customer_name": customer_name,
-                                    "customer_id": customer_id
-                                }
-                                
-                                # Add optional fields if available
-                                if customer_data.get("email"):
-                                    customer_summary["email"] = customer_data["email"]
-                                if customer_data.get("mobile_number"):
-                                    customer_summary["mobile_number"] = customer_data["mobile_number"]
-                                if customer_data.get("country_code"):
-                                    customer_summary["country_code"] = customer_data["country_code"]
-                                
-                                combined_responses.append(customer_summary)
                 except Exception as e:
                     logging.warning(f"Could not fetch customer information: {e}")
+            
+            # Always create customer_summary if we have customer information
+            if customer_name:
+                # Extract customer_id if not already set
+                if not customer_id:
+                    customer_id_match = re.search(r'customer\s*(\d+)', str(resp_live), re.IGNORECASE)
+                    if customer_id_match:
+                        customer_id = customer_id_match.group(1)
+                
+                # Create customer_summary response
+                customer_summary = {
+                    "type": "customer_summary",
+                    "customer_name": customer_name,
+                    "customer_id": customer_id
+                }
+                
+                # If we fetched customer data directly, add optional fields
+                if 'customer_data' in locals() and customer_data:
+                    if customer_data.get("email"):
+                        customer_summary["email"] = customer_data["email"]
+                    if customer_data.get("mobile_number"):
+                        customer_summary["mobile_number"] = customer_data["mobile_number"]
+                    if customer_data.get("country_code"):
+                        customer_summary["country_code"] = customer_data["country_code"]
+                
+                combined_responses.append(customer_summary)
         
         # Create loyalty_summary response from common data
         if isinstance(cleaned_common, dict) and cleaned_common.get("type") == "loyalty_summary":
