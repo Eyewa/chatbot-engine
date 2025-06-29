@@ -487,8 +487,13 @@ def create_app() -> FastAPI:
         
         # Handle different types of agent results
         if isinstance(agent_result, dict):
-            response_type = agent_result.get("type")
-            final_response_data = enforce_response_schema(agent_result, RESPONSE_TYPES)
+            # If it's a dict where all values are dicts (summary objects), convert to list
+            if all(isinstance(v, dict) for v in agent_result.values()):
+                agent_result = list(agent_result.values())
+                final_response_data = [enforce_response_schema(item, RESPONSE_TYPES) if isinstance(item, dict) else item for item in agent_result]
+            else:
+                response_type = agent_result.get("type")
+                final_response_data = enforce_response_schema(agent_result, RESPONSE_TYPES)
         elif isinstance(agent_result, list) and agent_result:
             # If it's a list of responses, process all of them
             processed_responses = []
@@ -529,7 +534,14 @@ def create_app() -> FastAPI:
             )
 
         # If after enforcement, still not a dict or missing required fields, try to fix with LLM
-        if not isinstance(final_response_data, dict) or not response_type or response_type not in RESPONSE_TYPES:
+        # Only run LLM fallback if not a dict or a list of dicts with 'type'
+        if (
+            not isinstance(final_response_data, dict)
+            and not (
+                isinstance(final_response_data, list)
+                and all(isinstance(item, dict) and "type" in item for item in final_response_data)
+            )
+        ):
             llm = ChatOpenAI(model="gpt-4o", temperature=0)
             final_response_data = generate_llm_message(
                 agent_result,
