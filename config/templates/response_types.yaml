@@ -9,6 +9,16 @@ orders_summary:
     - orders # for list of orders
   instructions: "The response should have a 'type' field set to 'orders_summary' and an 'orders' array containing order objects with fields like order_id, order_amount, customer_name, status, created_at."
 
+customer_summary:
+  description: "A summary of customer information."
+  fields:
+    - customer_name
+    - customer_id
+    - email
+    - mobile_number
+    - country_code
+  instructions: "The response should have a 'type' field set to 'customer_summary' and fields like customer_name, customer_id, email, mobile_number, country_code."
+
 loyalty_summary:
   description: "A summary of a customer's loyalty card and points."
   fields:

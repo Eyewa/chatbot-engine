@@ -1,16 +1,17 @@
 # agent/reload.py
 import os
 import logging
+from typing import Dict, List, Optional, Any
 from fastapi import APIRouter
 from agent.prompt_builder import PromptBuilder
-from langchain_community.utilities import SQLDatabase
+from langchain_community.utilities.sql_database import SQLDatabase
 from langchain_community.agent_toolkits.sql.toolkit import SQLDatabaseToolkit
 from langchain_openai import ChatOpenAI
 
 router = APIRouter()
 
 # --- Shared cache for tools ---
-RELOADABLE_STATE = {
+RELOADABLE_STATE: Dict[str, Optional[List[Any]]] = {
     "live": None,
     "common": None,
 }
@@ -29,6 +30,24 @@ def reload_config():
     PromptBuilder._timestamps.clear()
     logging.info("✅ Config cache cleared via /admin/reload-config")
     return {"status": "✅ Config reloaded"}
+
+
+@router.get("/admin/reload-response-types", tags=["Admin"])
+def reload_response_types():
+    """Reload response types configuration."""
+    try:
+        # Import and reload the response types
+        from simple_yaml import safe_load
+        import main
+        
+        # Reload the response types
+        main.RESPONSE_TYPES = safe_load("config/templates/response_types.yaml")
+        
+        logging.info("✅ Response types reloaded via /admin/reload-response-types")
+        return {"status": "✅ Response types reloaded", "types": list(main.RESPONSE_TYPES.keys())}
+    except Exception as e:
+        logging.error(f"❌ Failed to reload response types: {e}")
+        return {"status": "❌ Failed to reload response types", "error": str(e)}
 
 
 def _rename_tools(tools, suffix: str):
@@ -61,6 +80,10 @@ def rebuild_sql_tools(db_type: str):
             "customer_wallet",
         ]
     else:
+        return None
+
+    if not uri:
+        logging.error(f"No database URI found for {db_type}")
         return None
 
     db = SQLDatabase.from_uri(

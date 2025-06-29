@@ -74,7 +74,8 @@ query_scoping:
 
 response_combination:
   merge_strategies:
-    orders_and_loyalty: "mixed_summary"
+    orders_and_loyalty: "separate_responses"
     orders_only: "orders_summary"
     loyalty_only: "loyalty_summary"
+    customer_only: "customer_summary"
     default: "text_response" 

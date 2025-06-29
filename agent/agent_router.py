@@ -351,21 +351,84 @@ def _combine_responses(resp_live, resp_common):
     if cleaned_common and not cleaned_live:
         return cleaned_common
     
-    # If both have data, return both as separate responses
+    # If both have data, return separate response objects
     if cleaned_live and cleaned_common:
-        # Return both responses as a list, preserving their original structure
-        combined_response = []
+        combined_responses = []
         
-        # Add live data (orders)
-        if cleaned_live:
-            combined_response.append(cleaned_live)
+        # Create orders_summary response from live data
+        if isinstance(cleaned_live, dict) and cleaned_live.get("type") == "orders_summary":
+            orders = cleaned_live.get("orders", [])
+            if orders:
+                # If there are orders, include them in orders_summary
+                combined_responses.append({
+                    "type": "orders_summary",
+                    "orders": orders
+                })
+            
+            # Always try to get customer information
+            customer_name = None
+            customer_id = None
+            
+            # Try to extract customer name from orders first
+            if orders and len(orders) > 0 and isinstance(orders[0], dict):
+                first_order = orders[0]
+                if "customer_name" in first_order:
+                    customer_name = first_order["customer_name"]
+            
+            # If no customer name from orders, try to extract customer_id and fetch directly
+            if not customer_name:
+                try:
+                    # Extract customer_id from the original query
+                    customer_id_match = re.search(r'customer\s*(\d+)', str(resp_live), re.IGNORECASE)
+                    if customer_id_match:
+                        customer_id = customer_id_match.group(1)
+                        # Query customer_entity table directly
+                        customer_query = f"SELECT entity_id, firstname, lastname, email, mobile_number, country_code FROM customer_entity WHERE entity_id = {customer_id}"
+                        customer_result = run_sql_query(customer_query, "live")
+                        if customer_result and len(customer_result) > 0:
+                            customer_data = customer_result[0]
+                            firstname = customer_data.get("firstname", "")
+                            lastname = customer_data.get("lastname", "")
+                            if firstname or lastname:
+                                customer_name = f"{firstname} {lastname}".strip()
+                                
+                                # Create customer_summary response
+                                customer_summary = {
+                                    "type": "customer_summary",
+                                    "customer_name": customer_name,
+                                    "customer_id": customer_id
+                                }
+                                
+                                # Add optional fields if available
+                                if customer_data.get("email"):
+                                    customer_summary["email"] = customer_data["email"]
+                                if customer_data.get("mobile_number"):
+                                    customer_summary["mobile_number"] = customer_data["mobile_number"]
+                                if customer_data.get("country_code"):
+                                    customer_summary["country_code"] = customer_data["country_code"]
+                                
+                                combined_responses.append(customer_summary)
+                except Exception as e:
+                    logging.warning(f"Could not fetch customer information: {e}")
         
-        # Add common data (loyalty)
-        if cleaned_common:
-            combined_response.append(cleaned_common)
+        # Create loyalty_summary response from common data
+        if isinstance(cleaned_common, dict) and cleaned_common.get("type") == "loyalty_summary":
+            loyalty_summary = {"type": "loyalty_summary"}
+            
+            # Extract loyalty fields
+            if "card_number" in cleaned_common:
+                loyalty_summary["card_number"] = cleaned_common["card_number"]
+            if "status" in cleaned_common:
+                loyalty_summary["status"] = cleaned_common["status"]
+            if "points_balance" in cleaned_common:
+                loyalty_summary["points_balance"] = cleaned_common["points_balance"]
+            if "expiry_date" in cleaned_common:
+                loyalty_summary["expiry_date"] = cleaned_common["expiry_date"]
+            
+            combined_responses.append(loyalty_summary)
         
-        logging.info(f"[_combine_responses] Combined response with both data sources: {combined_response}")
-        return combined_response
+        logging.info(f"[_combine_responses] Created separate responses: {combined_responses}")
+        return combined_responses
     
     logging.info(f"[_combine_responses] No combined response created")
     return None
@@ -510,7 +573,7 @@ def run_sql_query(sql: str, db: str = "live") -> list:
     try:
         with engine.connect() as conn:
             result = conn.execute(text(sql))
-            rows = [dict(row) for row in result]
+            rows = [dict(row._mapping) for row in result]
             logging.info(f"[DB] Query returned {len(rows)} rows.")
             return rows
     except Exception as exc:

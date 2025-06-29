@@ -490,13 +490,22 @@ def create_app() -> FastAPI:
             response_type = agent_result.get("type")
             final_response_data = enforce_response_schema(agent_result, RESPONSE_TYPES)
         elif isinstance(agent_result, list) and agent_result:
-            # If it's a list of responses, take the first one
-            first_result = agent_result[0]
-            if isinstance(first_result, dict):
-                response_type = first_result.get("type")
-                final_response_data = enforce_response_schema(first_result, RESPONSE_TYPES)
+            # If it's a list of responses, process all of them
+            processed_responses = []
+            for result in agent_result:
+                if isinstance(result, dict):
+                    response_type = result.get("type")
+                    processed_result = enforce_response_schema(result, RESPONSE_TYPES)
+                    processed_responses.append(processed_result)
+                else:
+                    processed_responses.append(result)
+            
+            # If we have multiple responses, return them as a list
+            if len(processed_responses) > 1:
+                final_response_data = processed_responses
             else:
-                final_response_data = first_result
+                # If only one response, return it directly
+                final_response_data = processed_responses[0] if processed_responses else agent_result
         else:
             # If not a dict or list, it's likely plain text - try to determine the appropriate schema
             llm = ChatOpenAI(model="gpt-4o", temperature=0)
