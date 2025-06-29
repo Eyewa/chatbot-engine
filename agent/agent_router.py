@@ -355,12 +355,12 @@ def _combine_responses(resp_live, resp_common):
         # Create orders_summary response from live data
         if isinstance(cleaned_live, dict) and cleaned_live.get("type") == "orders_summary":
             orders = cleaned_live.get("orders", [])
-            if orders:
-                # If there are orders, include them in orders_summary
-                combined_responses.append({
-                    "type": "orders_summary",
-                    "orders": orders
-                })
+            # Always include orders_summary, even if orders array is empty
+            # This allows the LLM to understand there are no orders and generate appropriate conversation messages
+            combined_responses.append({
+                "type": "orders_summary",
+                "orders": orders
+            })
             
             # Always try to get customer information
             customer_name = None

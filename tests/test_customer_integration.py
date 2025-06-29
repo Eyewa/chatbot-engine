@@ -25,12 +25,22 @@ def test_customer_summary_and_orders(customer_id, expect_orders):
     )
     assert found_customer, f"customer_summary not found in response for customer {customer_id}"
 
-    # Orders summary presence depends on test case
-    found_orders = any(
-        (isinstance(item, dict) and item.get("type") == "orders_summary" and item.get("orders"))
+    # Always expect orders_summary (even if empty)
+    found_orders_summary = any(
+        (isinstance(item, dict) and item.get("type") == "orders_summary")
         for item in (data if isinstance(data, list) else [data])
     )
+    assert found_orders_summary, f"orders_summary not found for customer {customer_id}"
+
+    # Check if orders array has actual orders
+    orders_summary = next(
+        (item for item in (data if isinstance(data, list) else [data]) 
+         if isinstance(item, dict) and item.get("type") == "orders_summary"), 
+        None
+    )
+    has_orders = orders_summary and orders_summary.get("orders") and len(orders_summary.get("orders", [])) > 0
+    
     if expect_orders:
-        assert found_orders, f"orders_summary not found for customer {customer_id} (should have orders)"
+        assert has_orders, f"orders_summary has no orders for customer {customer_id} (should have orders)"
     else:
-        assert not found_orders, f"orders_summary found for customer {customer_id} (should have no orders)" 
+        assert not has_orders, f"orders_summary has orders for customer {customer_id} (should have no orders)" 
