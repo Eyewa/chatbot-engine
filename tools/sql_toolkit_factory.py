@@ -117,7 +117,18 @@ def get_live_sql_tools():
     if not uri:
         logging.error("SQL_DATABASE_URI_LIVE is not set")
         return []
-    allowed = ["sales_order", "customer_entity", "order_meta_data", "sales_order_address", "sales_order_payment"]
+    
+    # Load allowed tables from schema
+    schema_path = os.path.join("config", "schema", "schema.yaml")
+    try:
+        with open(schema_path, 'r') as f:
+            schema = yaml.safe_load(f)
+        allowed = list(schema.get('live', {}).get('tables', {}).keys())
+    except Exception as e:
+        logging.error(f"Could not load schema config: {e}")
+        # Fallback to hardcoded list
+        allowed = ["sales_order", "customer_entity", "order_meta_data", "sales_order_address", "sales_order_payment"]
+    
     return _create_sql_tools(uri, allowed, "live")
 
 @lru_cache
@@ -128,7 +139,18 @@ def get_common_sql_tools():
     if not uri:
         logging.error("SQL_DATABASE_URI_COMMON is not set")
         return []
-    allowed = ["customer_loyalty_card", "customer_loyalty_ledger", "customer_wallet"]
+    
+    # Load allowed tables from schema
+    schema_path = os.path.join("config", "schema", "schema.yaml")
+    try:
+        with open(schema_path, 'r') as f:
+            schema = yaml.safe_load(f)
+        allowed = list(schema.get('common', {}).get('tables', {}).keys())
+    except Exception as e:
+        logging.error(f"Could not load schema config: {e}")
+        # Fallback to hardcoded list
+        allowed = ["customer_loyalty_card", "customer_loyalty_ledger", "customer_wallet"]
+    
     return _create_sql_tools(uri, allowed, "common")
 
 

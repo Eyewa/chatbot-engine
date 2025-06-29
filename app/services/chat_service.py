@@ -4,6 +4,8 @@ Handles agent invocation, response processing, and history management.
 """
 
 import logging
+import os
+import yaml
 from typing import Any, Dict, List, Optional
 
 from langchain_openai import ChatOpenAI
@@ -149,12 +151,22 @@ class ChatService:
             # If not a dict or list, it's likely plain text - try to determine the appropriate schema
             # Try to determine what type of data this is based on the content
             if isinstance(agent_result, str):
-                if "order" in agent_result.lower():
-                    response_type = "orders_summary"
-                elif "loyalty" in agent_result.lower() or "card" in agent_result.lower():
-                    response_type = "loyalty_summary"
-                elif "wallet" in agent_result.lower() or "balance" in agent_result.lower():
-                    response_type = "wallet_summary"
+                # Load response type detection configuration
+                config_path = os.path.join("config", "query_routing.yaml")
+                try:
+                    with open(config_path, 'r') as f:
+                        routing_config = yaml.safe_load(f)
+                    content_keywords = routing_config.get('response_type_detection', {}).get('content_keywords', {})
+                except Exception as e:
+                    logger.warning(f"Could not load response type detection config: {e}")
+                    content_keywords = {}
+                
+                # Determine response type based on configuration
+                agent_result_lower = agent_result.lower()
+                for response_type, keywords in content_keywords.items():
+                    if any(keyword in agent_result_lower for keyword in keywords):
+                        response_type = routing_config.get('response_type_detection', {}).get('type_mapping', {}).get(response_type, response_type)
+                        break
                 else:
                     response_type = "text_response"
             

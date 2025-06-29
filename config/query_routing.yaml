@@ -1,6 +1,18 @@
 # Query routing configuration
 # Only contains routing/classification logic
 
+response_type_detection:
+  content_keywords:
+    orders_summary: ["order", "orders"]
+    loyalty_summary: ["loyalty", "card", "loyalty card"]
+    wallet_summary: ["wallet", "balance"]
+    customer_summary: ["customer", "name", "email"]
+  type_mapping:
+    orders_summary: "orders_summary"
+    loyalty_summary: "loyalty_summary"
+    wallet_summary: "wallet_summary"
+    customer_summary: "customer_summary"
+
 classification_rules:
   keywords:
     live_only:

@@ -1,5 +1,15 @@
 schema_version: 1.0
 
+field_mappings:
+  customer_name:
+    source_fields: ["firstname", "lastname"]
+    transformation: "CONCAT({firstname}, ' ', {lastname})"
+    target_field: "customer_name"
+  customer_id:
+    source_fields: ["entity_id"]
+    transformation: "{entity_id}"
+    target_field: "customer_id"
+
 live:
   tables:
     customer_entity:

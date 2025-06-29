@@ -48,14 +48,6 @@ from agent.config_loader import config_loader
 from agent.utils import filter_response_by_type, extract_last_n, generate_llm_message
 from agent.dynamic_sql_builder import load_schema, build_dynamic_sql, get_field_alias
 
-# Try to import token tracking
-try:
-    from token_tracker import track_llm_call
-    TOKEN_TRACKING_AVAILABLE = True
-except ImportError:
-    TOKEN_TRACKING_AVAILABLE = False
-    logging.warning("Token tracking not available")
-
 # Global agent instances
 live_agent = None
 common_agent = None
@@ -88,19 +80,6 @@ def _classify_query(query: str, classifier_chain) -> str:
     # Default to classifier chain
     try:
         result = classifier_chain.invoke({"input": query})
-        
-        # Track token usage for classification
-        if TOKEN_TRACKING_AVAILABLE:
-            try:
-                track_llm_call(
-                    call_type="classification",
-                    function_name="intent_classifier",
-                    prompt=f"Classify this query: {query}",
-                    response=str(result),
-                    model="gpt-4o"
-                )
-            except Exception as e:
-                logging.warning(f"[TokenTracker] Could not track classification tokens: {e}")
         
         return str(result).strip().lower()
     except Exception as exc:
@@ -204,8 +183,17 @@ def _create_live_agent():
 
 def _create_common_agent():
     tools = get_common_sql_tools()
-    # Use only tables that exist in eyewa_common
-    allowed = ["customer_loyalty_card", "customer_loyalty_ledger", "customer_wallet"]
+    # Load allowed tables from schema
+    schema_path = os.path.join("config", "schema", "schema.yaml")
+    try:
+        with open(schema_path, 'r') as f:
+            schema = yaml.safe_load(f)
+        allowed = list(schema.get('common', {}).get('tables', {}).keys())
+    except Exception as e:
+        logging.error(f"Could not load schema config: {e}")
+        # Fallback to hardcoded list
+        allowed = ["customer_loyalty_card", "customer_loyalty_ledger", "customer_wallet"]
+    
     # Build a strict prompt
     builder = PromptBuilder()
     system_prompt = builder.build_system_prompt(
@@ -276,21 +264,10 @@ def deep_clean_json_blocks(obj):
         return obj
 
 
-def _combine_responses(resp_live, resp_common):
-    logging.debug(f"[_combine_responses] resp_live: {resp_live}, resp_common: {resp_common}")
-    
-    # Load query routing configuration for merge strategies
-    config_path = os.path.join("config", "query_routing.yaml")
-    try:
-        with open(config_path, 'r') as f:
-            routing_config = yaml.safe_load(f)
-    except Exception as e:
-        logging.error(f"Could not load query routing config: {e}")
-        routing_config = {}
-    
-    merge_strategies = routing_config.get('response_combination', {}).get('merge_strategies', {})
-    
-    builder = PromptBuilder()
+def _combine_responses(resp_live, resp_common, user_query=None):
+    response_types = load_response_types()
+    schema = load_schema()
+    combined_responses = []
 
     def _parse(resp):
         if not resp:
@@ -308,136 +285,75 @@ def _combine_responses(resp_live, resp_common):
 
     live_data = _parse(resp_live)
     common_data = _parse(resp_common)
-    logging.debug(f"[_combine_responses] Parsed live_data: {live_data}, common_data: {common_data}")
 
-    cleaned_live = deep_clean_json_blocks(live_data)
-    if isinstance(cleaned_live, dict):
-        cleaned_live = filter_response_by_type(cleaned_live)
-    cleaned_common = deep_clean_json_blocks(common_data)
-    if isinstance(cleaned_common, dict):
-        # --- GENERIC PATCH: flatten any list of dicts for allowed fields ---
-        summary_type = cleaned_common.get("type")
-        allowed_fields = set()
-        if summary_type:
-            try:
-                schema_path = os.path.join("config", "templates", "response_types.yaml")
-                with open(schema_path) as f:
-                    response_types = yaml.safe_load(f)
-                allowed_fields = set(response_types.get(summary_type, {}).get("fields", []))
-            except Exception as e:
-                logging.warning(f"[GENERIC FLATTEN] Could not load response_types.yaml: {e}")
-        # For each key in cleaned_common, if it's a list of dicts, flatten the first dict's allowed fields
-        for key, value in list(cleaned_common.items()):
-            if isinstance(value, list) and value and isinstance(value[0], dict):
-                for field in allowed_fields:
-                    if field in value[0]:
-                        cleaned_common[field] = value[0][field]
-                cleaned_common.pop(key, None)
-        cleaned_common = filter_response_by_type(cleaned_common)
+    # Helper to process a single response dict or list
+    def process_response(resp):
+        if isinstance(resp, dict) and "type" in resp:
+            summary_type = resp["type"]
+            if summary_type in response_types:
+                return build_summary(summary_type, resp, schema, response_types)
+        elif isinstance(resp, list):
+            return [build_summary(item["type"], item, schema, response_types)
+                    for item in resp if isinstance(item, dict) and "type" in item and item["type"] in response_types]
+        return None
 
-    # If both are empty or None
-    if not cleaned_live and not cleaned_common:
-        logging.info("[_combine_responses] No data from either source.")
+    # Process both live and common responses
+    live_summary = process_response(live_data)
+    common_summary = process_response(common_data)
+
+    # Combine results
+    if live_summary:
+        if isinstance(live_summary, list):
+            combined_responses.extend(live_summary)
+        else:
+            combined_responses.append(live_summary)
+    if common_summary:
+        if isinstance(common_summary, list):
+            combined_responses.extend(common_summary)
+        else:
+            combined_responses.append(common_summary)
+
+    # --- Always include customer_summary if customer_id is present in the query ---
+    if user_query is not None:
+        import re
+        match = re.search(r"customer\s*(\d+)", user_query, re.IGNORECASE)
+        customer_id = match.group(1) if match else None
+        already_present = any(r.get("type") == "customer_summary" for r in combined_responses if isinstance(r, dict))
+        if customer_id and not already_present:
+            # Fetch customer info from DB (config-driven fields)
+            customer_fields = response_types.get("customer_summary", {}).get("fields", [])
+            if customer_fields:
+                # Build SQL dynamically from schema
+                table = "customer_entity"
+                select_fields = []
+                for f in customer_fields:
+                    if "field_mappings" in schema and f in schema["field_mappings"]:
+                        mapping = schema["field_mappings"][f]
+                        select_fields.extend(mapping.get("source_fields", []))
+                    else:
+                        select_fields.append(f)
+                select_fields = list(set(select_fields))
+                sql = f"SELECT {', '.join(select_fields)} FROM {table} WHERE entity_id = {customer_id}"
+                rows = run_sql_query(sql, db="live")
+                if rows:
+                    customer_data = rows[0]
+                    summary = build_summary("customer_summary", customer_data, schema, response_types)
+                    # Add customer_id to summary for clarity
+                    summary["customer_id"] = str(customer_id)
+                    combined_responses.append(summary)
+
+    if not combined_responses:
+        # Fallback: no data from either source
+        config_path = os.path.join("config", "query_routing.yaml")
+        try:
+            with open(config_path, 'r') as f:
+                routing_config = yaml.safe_load(f)
+            merge_strategies = routing_config.get('response_combination', {}).get('merge_strategies', {})
+        except Exception as e:
+            merge_strategies = {}
         return {"type": merge_strategies.get("default", "text_response"), "message": "No data found from either source"}
-    
-    # If only live has data
-    if cleaned_live and not cleaned_common:
-        return cleaned_live
-    
-    # If only common has data
-    if cleaned_common and not cleaned_live:
-        return cleaned_common
-    
-    # If both have data, return separate response objects
-    if cleaned_live and cleaned_common:
-        combined_responses = []
-        
-        # Create orders_summary response from live data
-        if isinstance(cleaned_live, dict) and cleaned_live.get("type") == "orders_summary":
-            orders = cleaned_live.get("orders", [])
-            # Always include orders_summary, even if orders array is empty
-            # This allows the LLM to understand there are no orders and generate appropriate conversation messages
-            combined_responses.append({
-                "type": "orders_summary",
-                "orders": orders
-            })
-            
-            # Always try to get customer information
-            customer_name = None
-            customer_id = None
-            
-            # Try to extract customer name from orders first
-            if orders and len(orders) > 0 and isinstance(orders[0], dict):
-                first_order = orders[0]
-                if "customer_name" in first_order:
-                    customer_name = first_order["customer_name"]
-            
-            # If no customer name from orders, try to extract customer_id and fetch directly
-            if not customer_name:
-                try:
-                    # Extract customer_id from the original query
-                    customer_id_match = re.search(r'customer\s*(\d+)', str(resp_live), re.IGNORECASE)
-                    if customer_id_match:
-                        customer_id = customer_id_match.group(1)
-                        # Query customer_entity table directly
-                        customer_query = f"SELECT entity_id, firstname, lastname, email, mobile_number, country_code FROM customer_entity WHERE entity_id = {customer_id}"
-                        customer_result = run_sql_query(customer_query, "live")
-                        if customer_result and len(customer_result) > 0:
-                            customer_data = customer_result[0]
-                            firstname = customer_data.get("firstname", "")
-                            lastname = customer_data.get("lastname", "")
-                            if firstname or lastname:
-                                customer_name = f"{firstname} {lastname}".strip()
-                except Exception as e:
-                    logging.warning(f"Could not fetch customer information: {e}")
-            
-            # Always create customer_summary if we have customer information
-            if customer_name:
-                # Extract customer_id if not already set
-                if not customer_id:
-                    customer_id_match = re.search(r'customer\s*(\d+)', str(resp_live), re.IGNORECASE)
-                    if customer_id_match:
-                        customer_id = customer_id_match.group(1)
-                
-                # Create customer_summary response
-                customer_summary = {
-                    "type": "customer_summary",
-                    "customer_name": customer_name,
-                    "customer_id": customer_id
-                }
-                
-                # If we fetched customer data directly, add optional fields
-                if 'customer_data' in locals() and customer_data:
-                    if customer_data.get("email"):
-                        customer_summary["email"] = customer_data["email"]
-                    if customer_data.get("mobile_number"):
-                        customer_summary["mobile_number"] = customer_data["mobile_number"]
-                    if customer_data.get("country_code"):
-                        customer_summary["country_code"] = customer_data["country_code"]
-                
-                combined_responses.append(customer_summary)
-        
-        # Create loyalty_summary response from common data
-        if isinstance(cleaned_common, dict) and cleaned_common.get("type") == "loyalty_summary":
-            loyalty_summary = {"type": "loyalty_summary"}
-            
-            # Extract loyalty fields
-            if "card_number" in cleaned_common:
-                loyalty_summary["card_number"] = cleaned_common["card_number"]
-            if "status" in cleaned_common:
-                loyalty_summary["status"] = cleaned_common["status"]
-            if "points_balance" in cleaned_common:
-                loyalty_summary["points_balance"] = cleaned_common["points_balance"]
-            if "expiry_date" in cleaned_common:
-                loyalty_summary["expiry_date"] = cleaned_common["expiry_date"]
-            
-            combined_responses.append(loyalty_summary)
-        
-        logging.info(f"[_combine_responses] Created separate responses: {combined_responses}")
-        return combined_responses
-    
-    logging.info(f"[_combine_responses] No combined response created")
-    return None
+
+    return combined_responses
 
 
 # -------------------------
@@ -457,9 +373,15 @@ def is_structured_response(resp, expected_types=None):
         return False
     if expected_types and t not in expected_types:
         return False
-    from main import RESPONSE_TYPES  # avoid circular import at top
-    allowed_fields = RESPONSE_TYPES.get(t, {}).get("fields", [])
-    return any(resp.get(f) is not None for f in allowed_fields)
+    
+    # Load response types from config instead of circular import
+    try:
+        response_types = load_response_types()
+        allowed_fields = response_types.get(t, {}).get("fields", [])
+        return any(resp.get(f) is not None for f in allowed_fields)
+    except Exception as e:
+        logging.warning(f"Could not load response types for validation: {e}")
+        return True  # Fallback to accepting any structured response
 
 
 def extract_focused_prompt(user_query, db):
@@ -650,7 +572,7 @@ def _handle_both(input_dict):
         logging.error("[_handle_both] Error fetching data from both sources.")
         return {"type": "text_response", "message": "There was an error fetching data from both sources."}
 
-    combined = _combine_responses(live_resp, common_resp)
+    combined = _combine_responses(live_resp, common_resp, input_text)
 
     # Handle the case where combined is None (no mixed response created)
     if combined is None:
@@ -751,3 +673,32 @@ def get_routed_agent():
 def safe_load(file_path):
     with open(file_path, 'r', encoding='utf-8') as f:
         return yaml.safe_load(f)
+
+def load_response_types():
+    with open(os.path.join("config", "templates", "response_types.yaml")) as f:
+        return yaml.safe_load(f)
+
+def load_schema():
+    with open(os.path.join("config", "schema", "schema.yaml")) as f:
+        return yaml.safe_load(f)
+
+def build_summary(summary_type, data, schema, response_types):
+    summary_config = response_types.get(summary_type, {})
+    fields = summary_config.get("fields", [])
+    summary = {"type": summary_type}
+    for field in fields:
+        if "field_mappings" in schema and field in schema["field_mappings"]:
+            mapping = schema["field_mappings"][field]
+            summary[field] = apply_field_mapping(mapping, data)
+        else:
+            summary[field] = data.get(field)
+    return summary
+
+def apply_field_mapping(mapping, data):
+    if "transformation" in mapping and "source_fields" in mapping:
+        if mapping["transformation"].startswith("CONCAT"):
+            parts = [data.get(sf, "") for sf in mapping["source_fields"]]
+            return " ".join(parts).strip()
+        else:
+            return data.get(mapping["source_fields"][0])
+    return None
