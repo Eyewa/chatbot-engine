@@ -490,14 +490,14 @@ def inject_limit_phrase(prompt, limit):
 
 
 def get_engine(db_key: str) -> Engine:
-    # Map db_key to your real DB URIs
-    db_uris = {
-        "live": "mysql+pymysql://read_only:Aukdfduyje983idbj@db.eyewa.internal:3306/eyewa_live",
-        "common": "mysql+pymysql://read_only:Aukdfduyje983idbj@db.eyewa.internal:3306/eyewa_common"
-    }
-    uri = db_uris.get(db_key)
-    if not uri:
+    if db_key == "live":
+        uri = os.getenv("SQL_DATABASE_URI_LIVE")
+    elif db_key == "common":
+        uri = os.getenv("SQL_DATABASE_URI_COMMON")
+    else:
         raise ValueError(f"Unknown db_key: {db_key}")
+    if not uri:
+        raise ValueError(f"Database URI for {db_key} not set in environment variables.")
     return create_engine(uri)
 
 
