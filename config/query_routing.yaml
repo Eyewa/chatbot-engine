@@ -16,6 +16,8 @@ classification_rules:
       - "ledger"
       - "points"
       - "balance"
+      - "card"
+      - "card number"
     requires_ledger:
       - "ledger"
       - "history"
@@ -28,6 +30,38 @@ classification_rules:
       - "card"
       - "card number"
       - "loyalty card"
+
+prompt_templates:
+  live:
+    order: "show {limit}orders{fields} for customer {customer_id}"
+    payment: "show payment information for customer {customer_id}"
+    customer: "show customer information for customer {customer_id}"
+    address: "show address information for customer {customer_id}"
+    shipping: "show shipping information for customer {customer_id}"
+    billing: "show billing information for customer {customer_id}"
+  common:
+    loyalty: "show loyalty card details for customer {customer_id}"
+    wallet: "show wallet balance for customer {customer_id}"
+    ledger: "show loyalty ledger for customer {customer_id}"
+    points: "show loyalty points for customer {customer_id}"
+    balance: "show balance information for customer {customer_id}"
+
+field_extraction:
+  orders_summary:
+    order_amount: ["order_amount", "amount"]
+    customer_name: ["customer_name", "name"]
+    status: ["status"]
+    created_at: ["created_at", "date"]
+  loyalty_summary:
+    card_number: ["card_number", "card"]
+    status: ["status"]
+    points_balance: ["points", "balance"]
+    expiry_date: ["expiry", "expiry_date"]
+  wallet_summary:
+    customer_balance: ["balance", "customer_balance"]
+    cashback_balance: ["cashback"]
+    credits_balance: ["credits"]
+    transactions: ["transactions"]
 
 query_scoping:
   both_databases:

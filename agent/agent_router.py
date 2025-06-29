@@ -47,6 +47,18 @@ from agent.config_loader import config_loader
 from agent.utils import filter_response_by_type, extract_last_n, generate_llm_message
 from agent.dynamic_sql_builder import load_schema, build_dynamic_sql, get_field_alias
 
+# Try to import token tracking
+try:
+    from token_tracker import track_llm_call
+    TOKEN_TRACKING_AVAILABLE = True
+except ImportError:
+    TOKEN_TRACKING_AVAILABLE = False
+    logging.warning("Token tracking not available")
+
+# Global agent instances
+live_agent = None
+common_agent = None
+
 # -------------------------
 # CLASSIFIER & INTENT
 # -------------------------
@@ -58,6 +70,7 @@ def _extract_customer_id(query: str) -> Optional[str]:
 
 
 def _classify_query(query: str, classifier_chain) -> str:
+    """Classify the intent of a query."""
     q = query.lower()
     
     # Get configuration-driven classification rules
@@ -73,7 +86,22 @@ def _classify_query(query: str, classifier_chain) -> str:
     
     # Default to classifier chain
     try:
-        return classifier_chain.invoke({"input": query}).strip().lower()
+        result = classifier_chain.invoke({"input": query})
+        
+        # Track token usage for classification
+        if TOKEN_TRACKING_AVAILABLE:
+            try:
+                track_llm_call(
+                    call_type="classification",
+                    function_name="intent_classifier",
+                    prompt=f"Classify this query: {query}",
+                    response=str(result),
+                    model="gpt-4o"
+                )
+            except Exception as e:
+                logging.warning(f"[TokenTracker] Could not track classification tokens: {e}")
+        
+        return str(result).strip().lower()
     except Exception as exc:
         logging.error("Classifier error: %s", exc)
         return "both"
@@ -117,6 +145,15 @@ def find_relevant_examples(allowed_tables, examples, user_query=None, top_k=2):
 def _build_agent(
     tools, db_key: str, allowed_tables: list[str], max_iterations: int = 5
 ):
+    if not LANGCHAIN_AVAILABLE:
+        def dummy_agent(input_dict):
+            return {"type": "text_response", "message": "LangChain not available"}
+        return dummy_agent
+
+    from agent.prompt_builder import PromptBuilder
+    from langchain.agents import create_openai_functions_agent
+    from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+
     builder = PromptBuilder()
     # Load and inject only relevant join examples
     join_examples = load_join_examples()
@@ -132,12 +169,15 @@ def _build_agent(
     system_prompt = builder.build_system_prompt(
         db=db_key, allowed_tables=allowed_tables, extra_examples=relevant_examples
     )
+    # Enforce strict JSON output
+    system_prompt += "\n\nALWAYS respond with a valid JSON object. Do NOT include any text, explanation or markdown code blocks. Only output the JSON."
 
     logging.info(f"[AGENT] About to build agent for db={db_key}")
     logging.info(f"[AGENT] Allowed tables: {allowed_tables}")
-    logging.info(f"[AGENT] System prompt to LLM:\n{system_prompt}")
+    logging.info(f"[AGENT] System prompt to LLM (JSON enforcement={'ALWAYS respond with a valid JSON object' in system_prompt}):\n{system_prompt}")
 
     llm = ChatOpenAI(model="gpt-4o", temperature=0, max_retries=3)
+
     prompt = ChatPromptTemplate.from_messages(
         [
             ("system", system_prompt),
@@ -146,32 +186,10 @@ def _build_agent(
             MessagesPlaceholder(variable_name="agent_scratchpad"),
         ]
     )
+    logging.debug(f"[AGENT] Full prompt object: {prompt}")
+
     agent = create_openai_functions_agent(llm=llm, tools=tools, prompt=prompt)
-
-    def logging_wrapper(input, config=None):
-        logging.info(f"[AGENT] Invoking agent with input: {input}")
-        result = agent.invoke(input, config)
-        logging.info(f"[AGENT] Raw LLM output: {result}")
-        try:
-            import json
-            parsed = None
-            if isinstance(result, str):
-                try:
-                    parsed = json.loads(result)
-                except Exception:
-                    parsed = result
-            else:
-                parsed = result
-            logging.info(f"[AGENT] Parsed LLM output: {parsed}")
-        except Exception as e:
-            logging.warning(f"[AGENT] Could not parse LLM output: {e}")
-        return result
-
-    wrapped_agent = RunnableLambda(logging_wrapper)
-
-    return AgentExecutor(
-        agent=wrapped_agent, tools=tools, verbose=True
-    )
+    return AgentExecutor(agent=agent, tools=tools, verbose=True)
 
 
 def _create_live_agent():
@@ -259,6 +277,20 @@ def deep_clean_json_blocks(obj):
 
 def _combine_responses(resp_live, resp_common):
     logging.debug(f"[_combine_responses] resp_live: {resp_live}, resp_common: {resp_common}")
+    
+    # Load query routing configuration for merge strategies
+    import yaml
+    import os
+    config_path = os.path.join("config", "query_routing.yaml")
+    try:
+        with open(config_path, 'r') as f:
+            routing_config = yaml.safe_load(f)
+    except Exception as e:
+        logging.error(f"Could not load query routing config: {e}")
+        routing_config = {}
+    
+    merge_strategies = routing_config.get('response_combination', {}).get('merge_strategies', {})
+    
     builder = PromptBuilder()
 
     def _parse(resp):
@@ -309,20 +341,34 @@ def _combine_responses(resp_live, resp_common):
     # If both are empty or None
     if not cleaned_live and not cleaned_common:
         logging.info("[_combine_responses] No data from either source.")
-        return {"type": "text_response", "message": "No data found from either source"}
+        return {"type": merge_strategies.get("default", "text_response"), "message": "No data found from either source"}
+    
     # If only live has data
     if cleaned_live and not cleaned_common:
         return cleaned_live
+    
     # If only common has data
     if cleaned_common and not cleaned_live:
         return cleaned_common
-    # If both have data, return both in a dict
-    merged = {
-        "live": cleaned_live,
-        "common": cleaned_common,
-    }
-    logging.info(f"[_combine_responses] FULL combined result before output: {merged}")
-    return merged
+    
+    # If both have data, return both as separate responses
+    if cleaned_live and cleaned_common:
+        # Return both responses as a list, preserving their original structure
+        combined_response = []
+        
+        # Add live data (orders)
+        if cleaned_live:
+            combined_response.append(cleaned_live)
+        
+        # Add common data (loyalty)
+        if cleaned_common:
+            combined_response.append(cleaned_common)
+        
+        logging.info(f"[_combine_responses] Combined response with both data sources: {combined_response}")
+        return combined_response
+    
+    logging.info(f"[_combine_responses] No combined response created")
+    return None
 
 
 # -------------------------
@@ -349,34 +395,100 @@ def is_structured_response(resp, expected_types=None):
 
 def extract_focused_prompt(user_query, db):
     """
-    Extract the part of the user query relevant to the given db (live/common).
-    Use regex to extract loyalty/wallet/ledger for common, order/payment/customer for live.
-    If no relevant phrase is found, return None.
+    Extract the part of the user query relevant to the given db (live/common) using config-driven rules.
     """
+    import yaml
+    import os
+    
+    # Load query routing configuration
+    config_path = os.path.join("config", "query_routing.yaml")
+    try:
+        with open(config_path, 'r') as f:
+            routing_config = yaml.safe_load(f)
+    except Exception as e:
+        logging.error(f"Could not load query routing config: {e}")
+        return None
+    
     customer_id_match = re.findall(r'customer\s*(\d+)', user_query)
-    customer_id_str = f" of customer {''.join(customer_id_match)}" if customer_id_match else ""
+    customer_id = ''.join(customer_id_match) if customer_id_match else ""
+    logging.info(f"[extract_focused_prompt] db={db}, customer_id='{customer_id}'")
+    
+    classification_rules = routing_config.get('classification_rules', {})
+    keywords = classification_rules.get('keywords', {})
+    prompt_templates = routing_config.get('prompt_templates', {})
+    
     if db == "common":
-        m = re.search(r"(loyalty card|wallet|ledger|points|balance|expiry|loyalty)", user_query, re.I)
-        if m:
-            return m.group(0) + customer_id_str
+        # Check for common database keywords
+        common_keywords = keywords.get('common_only', [])
+        for keyword in common_keywords:
+            if re.search(rf'\b{re.escape(keyword)}\b', user_query, re.I):
+                # Use config-driven template
+                template = prompt_templates.get('common', {}).get(keyword, f"show {keyword} information for customer {{customer_id}}")
+                result = template.format(customer_id=customer_id)
+                
+                logging.info(f"[extract_focused_prompt] common match: '{keyword}' -> '{result}'")
+                return result
+        
+        logging.info(f"[extract_focused_prompt] common: no match found")
         return None
     else:
-        m = re.search(r"(order|payment|customer|address|shipping|billing)", user_query, re.I)
-        if m:
-            return m.group(0) + customer_id_str
+        # Check for live database keywords
+        live_keywords = keywords.get('live_only', [])
+        for keyword in live_keywords:
+            if re.search(rf'\b{re.escape(keyword)}\b', user_query, re.I):
+                if keyword == "order":
+                    # Extract limit if present
+                    limit_match = re.search(r"(last|recent)\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten)", user_query, re.I)
+                    limit_str = ""
+                    if limit_match:
+                        n_str = limit_match.group(2).lower()
+                        n = int(n_str) if n_str.isdigit() else {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10}.get(n_str, 5)
+                        limit_str = f"last {n} "
+                    
+                    # Use config-driven field extraction
+                    field_extraction = routing_config.get('field_extraction', {})
+                    orders_fields = field_extraction.get('orders_summary', {})
+                    
+                    fields = []
+                    for field_name, field_keywords in orders_fields.items():
+                        for keyword_check in field_keywords:
+                            if keyword_check in user_query.lower():
+                                fields.append(field_name)
+                                break
+                    
+                    fields_str = ""
+                    if fields:
+                        fields_str = f" with {', '.join(fields)}"
+                    
+                    # Use config-driven template
+                    template = prompt_templates.get('live', {}).get(keyword, f"show {{limit}}orders{{fields}} for customer {{customer_id}}")
+                    result = template.format(limit=limit_str, fields=fields_str, customer_id=customer_id)
+                else:
+                    # Use config-driven template for other keywords
+                    template = prompt_templates.get('live', {}).get(keyword, f"show {keyword} information for customer {{customer_id}}")
+                    result = template.format(customer_id=customer_id)
+                
+                logging.info(f"[extract_focused_prompt] live match: '{keyword}' -> '{result}'")
+                return result
+        
+        logging.info(f"[extract_focused_prompt] live: no match found")
         return None
 
 
 def inject_limit_phrase(prompt, limit):
     import re
+    logging.info(f"[inject_limit_phrase] Input prompt: '{prompt}', limit: {limit}")
     # Only inject if not already present
     if not re.search(r"(last|recent)\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+(order|orders|record|records)", prompt, re.IGNORECASE):
         # Try to keep the rest of the prompt, just prepend
         if "order" in prompt:
             # If 'of' is present, keep the rest
-            return f"last {limit} orders {prompt[prompt.find('of'):].strip()}" if "of" in prompt else f"last {limit} orders {prompt}"
+            result = f"last {limit} orders {prompt[prompt.find('of'):].strip()}" if "of" in prompt else f"last {limit} orders {prompt}"
         else:
-            return f"last {limit} records {prompt}"
+            result = f"last {limit} records {prompt}"
+        logging.info(f"[inject_limit_phrase] Modified prompt: '{result}'")
+        return result
+    logging.info(f"[inject_limit_phrase] No modification needed, returning: '{prompt}'")
     return prompt
 
 
@@ -414,10 +526,13 @@ def _handle_both(input_dict):
 
     # Pre-process for 'last N' or 'recent N'
     limit_n = extract_last_n(input_text)
+    logging.info(f"[_handle_both] Extracted limit_n: {limit_n}")
 
     # Extract focused prompts for each DB
     live_prompt = extract_focused_prompt(input_text, db="live")
     common_prompt = extract_focused_prompt(input_text, db="common")
+    logging.info(f"[_handle_both] Extracted live_prompt: '{live_prompt}'")
+    logging.info(f"[_handle_both] Extracted common_prompt: '{common_prompt}'")
 
     if not live_prompt and not common_prompt:
         return {"type": "text_response", "message": "Could not determine which data to fetch for either database. Please rephrase your query."}
@@ -439,17 +554,29 @@ def _handle_both(input_dict):
     if limit_n:
         sub_inputs["live"]["limit"] = limit_n
         sub_inputs["common"]["limit"] = limit_n
-        # Rewrite input to include 'last N orders' if not already present
-        sub_inputs["live"]["input"] = inject_limit_phrase(sub_inputs["live"]["input"], limit_n)
-        sub_inputs["common"]["input"] = inject_limit_phrase(sub_inputs["common"]["input"], limit_n)
+        # Only inject limit phrase if not already present in the prompt
+        if "last" not in sub_inputs["live"]["input"] and "recent" not in sub_inputs["live"]["input"]:
+            sub_inputs["live"]["input"] = inject_limit_phrase(sub_inputs["live"]["input"], limit_n)
+        if "last" not in sub_inputs["common"]["input"] and "recent" not in sub_inputs["common"]["input"]:
+            sub_inputs["common"]["input"] = inject_limit_phrase(sub_inputs["common"]["input"], limit_n)
+    
+    logging.info(f"[_handle_both] Final sub_inputs: {sub_inputs}")
 
     try:
-        live_resp = live_agent.invoke(sub_inputs["live"])
+        if live_agent is not None:
+            live_resp = live_agent.invoke(sub_inputs["live"])
+        else:
+            live_resp = {"type": "text_response", "message": "Live agent is not available."}
+        logging.info(f"[_handle_both] Live agent response: {live_resp}")
     except Exception as exc:
         logging.error("Live agent error: %s", exc)
         live_resp = None
     try:
-        common_resp = common_agent.invoke(sub_inputs["common"])
+        if common_agent is not None:
+            common_resp = common_agent.invoke(sub_inputs["common"])
+        else:
+            common_resp = {"type": "text_response", "message": "Common agent is not available."}
+        logging.info(f"[_handle_both] Common agent response: {common_resp}")
     except Exception as exc:
         logging.error("Common agent error: %s", exc)
         common_resp = None
@@ -459,33 +586,24 @@ def _handle_both(input_dict):
         return {"type": "text_response", "message": "There was an error fetching data from both sources."}
 
     combined = _combine_responses(live_resp, common_resp)
-    
-    # After combining, we might have a single summary dict, or a dict with {'live': {...}, 'common': {...}}
-    # We need to present this to the summarizer LLM.
-    data = []
-    if isinstance(combined, dict):
-        # Case 1: Both agents returned data, and it was merged
-        if "live" in combined and is_structured_response(combined.get("live")):
-            data.append(combined["live"])
-        if "common" in combined and is_structured_response(combined.get("common")):
-            data.append(combined["common"])
-        
-        # Case 2: Only one agent returned data, or they weren't merged into a nested dict
-        if not data and is_structured_response(combined):
-            data.append(combined)
 
-    logging.info(f"[_handle_both] Final data list for output: {data}")
-
-    if not data:
-        # Fallback to a generic message if no structured data was found
-        final_summary = {"type": "text_response", "message": "Could not retrieve structured data. Please try rephrasing your query."}
+    # Handle the case where combined is None (no mixed response created)
+    if combined is None:
+        # Fallback to returning the first available response
+        if live_resp:
+            final_response = live_resp
+        elif common_resp:
+            final_response = common_resp
+        else:
+            final_response = {"type": "text_response", "message": "No data found from either source"}
+        logging.info(f"[_handle_both] Fallback response: {final_response}")
+        return final_response
     else:
-        # Use a separate LLM call to summarize the final data
-        llm = ChatOpenAI(model="gpt-4o", temperature=0, max_retries=3)
-        final_summary = generate_llm_message(data, llm=llm)
+        # combined is already the final merged response
+        final_response = combined
 
-    logging.info(f"[_handle_both] FULL combined result before output: {final_summary}")
-    return final_summary
+    logging.info(f"[_handle_both] Final data list for output: {final_response}")
+    return final_response
 
 
 # -------------------------
@@ -503,6 +621,7 @@ def _create_classifier_chain():
         return Dummy()
 
     llm = ChatOpenAI(model="gpt-4o", temperature=0)
+    
     prompt = ChatPromptTemplate.from_messages(
         [
             (
@@ -540,9 +659,15 @@ def get_routed_agent():
             def invoke(self, input_dict):
                 intent = _classify(input_dict)
                 if intent == "live":
-                    return live_agent.invoke(input_dict)
+                    if live_agent is not None:
+                        return live_agent.invoke(input_dict)
+                    else:
+                        return {"type": "text_response", "message": "Live agent is not available."}
                 if intent == "common":
-                    return common_agent.invoke(input_dict)
+                    if common_agent is not None:
+                        return common_agent.invoke(input_dict)
+                    else:
+                        return {"type": "text_response", "message": "Common agent is not available."}
                 return _handle_both(input_dict)
 
         return SimpleRouter()

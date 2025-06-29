@@ -13,10 +13,16 @@ def filter_response_by_type(response_json: dict) -> dict:
         return response_json
     allowed_fields = RESPONSE_TYPES[response_type].get("fields", [])
     filtered = {"type": response_type}
-    for key in allowed_fields:
-        # Always include the field if present, even if it's an empty list or None
-        if key in response_json:
-            filtered[key] = response_json[key]
+    extras = {}
+    for key, value in response_json.items():
+        if key == "type":
+            continue
+        if key in allowed_fields:
+            filtered[key] = value
+        else:
+            extras[key] = value
+    if extras:
+        filtered["extras"] = extras
     return filtered
 
 # --- Added for extracting 'last N' or 'recent N' from user queries ---
@@ -39,29 +45,49 @@ def extract_last_n(query: str):
 import json
 import logging
 
-def generate_llm_message(output, llm):
+def generate_llm_message(output, llm, schema=None, response_type=None):
     prompt = (
-        "Given the following structured data, write a friendly, concise summary for the user. "
-        "If the data is empty or no results were found, say so clearly.\n\n"
-        f"DATA:\n{json.dumps(output, indent=2)}\n"
+        "Given the following data, generate a structured JSON response."
     )
-    if isinstance(output, dict) and "extras" in output:
-        prompt += (
-            "\nIf there is an 'extras' field, naturally include its information in the summary as if it were part of the main answer. "
-            "Do not mention the word 'extras' or that it is an extra detail—just present the information conversationally."
-        )
+    if schema and response_type and response_type in schema:
+        allowed_fields = schema[response_type]['fields']
+        prompt += f" The response must match this schema: {json.dumps(allowed_fields, indent=2)}. "
+        
+        # Use config-driven instructions from schema
+        if 'instructions' in schema[response_type]:
+            prompt += schema[response_type]['instructions'] + " "
+    
+    prompt += (
+        "\nDATA:\n" + json.dumps(output, indent=2) +
+        "\nOutput only a valid JSON object, with no explanation or code block formatting."
+    )
     try:
         resp = llm.invoke([
             {"role": "system", "content": "You are a helpful assistant."},
             {"role": "user", "content": prompt}
         ])
-        
+        # Token tracking
+        try:
+            from token_tracker import track_llm_call
+            track_llm_call(
+                call_type="response_formatting",
+                function_name="generate_llm_message",
+                prompt=prompt,
+                response=str(resp),
+                model="gpt-4o"
+            )
+        except Exception as e:
+            logging.warning(f"[TokenTracker] Could not track tokens: {e}")
         message = str(resp.content) if hasattr(resp, "content") else str(resp)
-
-        return {
-            "type": "text_response",
-            "message": message
-        }
+        # Try to parse as JSON
+        try:
+            parsed = json.loads(message)
+            return parsed
+        except Exception:
+            return {
+                "type": "text_response",
+                "message": message
+            }
     except Exception as e:
         logging.warning(f"⚠️ Could not generate LLM message: {e}")
         return {

@@ -4,8 +4,10 @@ import re
 import ast
 import json
 import logging
+import threading
 from typing import List, Optional, Any, Dict
 import subprocess
+import time
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -22,11 +24,18 @@ from langchain_openai import ChatOpenAI
 from simple_yaml import safe_load
 from agent.utils import filter_response_by_type, generate_llm_message
 
+# Import token monitoring
+try:
+    from monitor_tokens import start_monitoring, stop_monitoring, get_stats
+    TOKEN_MONITORING_AVAILABLE = True
+except ImportError:
+    TOKEN_MONITORING_AVAILABLE = False
+    logging.warning("Token monitoring not available - monitor_tokens module not found")
+
 logging.basicConfig(level=logging.DEBUG)
 
 # Load response types config
-with open(os.path.join("config", "templates", "response_types.yaml")) as f:
-    RESPONSE_TYPES = safe_load(f)
+RESPONSE_TYPES = safe_load("config/templates/response_types.yaml")
 
 # build a reverse index: field → list of types that include it
 FIELD_TO_TYPES: Dict[str, List[str]] = {}
@@ -34,12 +43,8 @@ for type_name, spec in RESPONSE_TYPES.items():
     for f in spec.get("fields", []):
         FIELD_TO_TYPES.setdefault(f, []).append(type_name)
 
-# Add this mapping at the top (after RESPONSE_TYPES is loaded)
-OUTPUT_TO_YAML_KEY_MAP = {
-    "orders": "orders_summary",
-    "loyalty_card": "loyalty_summary",
-    # Add more mappings as needed
-}
+# Global token monitoring state
+token_monitoring_active = False
 
 def merge_and_filter_responses(live, common, llm=None):
     merged = {}
@@ -219,31 +224,34 @@ class ErrorResponse(BaseModel):
 
 # Robust schema enforcement for all response types
 
-def enforce_response_schema(final, response_types):
-    response_type = final.get("type")
-    allowed_fields = set(response_types.get(response_type, {}).get("fields", []))
-    result = {"type": response_type}
+def enforce_response_schema(response: Dict[str, Any], schema: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Ensures the response conforms to the defined schema.
+    Any fields not in the schema are moved to an 'extras' dictionary.
+    """
+    response_type = response.get("type")
+    if not response_type or response_type not in schema:
+        # If the type is unknown, return as-is but log a warning.
+        logging.warning(f"Unknown response type: {response_type}. Passing through without enforcement.")
+        return response
+
+    allowed_fields = set(schema[response_type].get("fields", []))
+    
+    # Always include 'type'
+    allowed_fields.add("type")
+
+    result = {}
     extras = {}
-    for field, value in final.items():
-        if field == "type":
-            continue
-        if field in allowed_fields:
-            result[field] = value
+
+    for key, value in response.items():
+        if key in allowed_fields:
+            result[key] = value
         else:
-            extras[field] = value
+            extras[key] = value
+    
     if extras:
         result["extras"] = extras
-    # Special handling for orders_summary: filter fields in each order using schema
-    if response_type == "orders_summary" and "orders" in result:
-        # Dynamically get allowed fields for orders from the schema
-        allowed_order_fields = set()
-        if "orders" in response_types.get("orders_summary", {}).get("fields", []):
-            # Try to infer allowed fields for each order by inspecting the first order, or document this as a config extension point
-            # For now, do not filter fields (or optionally, add a config for allowed order fields)
-            pass
-        # If you want to filter, you could add a config section for order fields
-        # result["orders"] = filter_order_fields(result["orders"], allowed_order_fields)
-    logging.debug(f"[enforce_response_schema] Returning: {result}")
+
     return result
 
 # ------------------------
@@ -256,19 +264,9 @@ def create_app() -> FastAPI:
     # Load environment variables from .env file
     load_dotenv()
 
-    # Initialize agent (if not already done)
-    # Lazy initialization for agent
-    agent = None
-
-    def get_agent():
-        nonlocal agent
-        if agent is None:
-            agent = build_chatbot_agent()
-        return agent
-
     app = FastAPI(
-        title="Chatbot Engine",
-        description="A sophisticated, multi-agent chatbot with dynamic data routing.",
+        title="Chatbot API",
+        description="A sophisticated, multi-agent chatbot with dynamic data routing and token monitoring.",
         version="1.0.0"
     )
 
@@ -283,6 +281,168 @@ def create_app() -> FastAPI:
 
     # Add the reload router
     app.include_router(reload_router)
+
+    def get_agent():
+        """Get or create the chatbot agent"""
+        try:
+            agent = build_chatbot_agent()
+            return agent
+        except Exception as e:
+            logging.error(f"Error creating agent: {e}")
+            raise
+
+    # ------------------------
+    # Startup/Shutdown Events
+    # ------------------------
+
+    @app.on_event("startup")
+    async def startup_event():
+        """Startup event - initialize token monitoring"""
+        global token_monitoring_active
+        logging.info("🚀 Starting chatbot API...")
+        
+        if TOKEN_MONITORING_AVAILABLE:
+            try:
+                start_monitoring()
+                token_monitoring_active = True
+                logging.info("🔍 Token monitoring started automatically")
+            except Exception as e:
+                logging.error(f"Failed to start token monitoring: {e}")
+        else:
+            logging.warning("⚠️ Token monitoring not available")
+
+    @app.on_event("shutdown")
+    async def shutdown_event():
+        """Shutdown event - stop token monitoring"""
+        global token_monitoring_active
+        logging.info("🛑 Shutting down chatbot API...")
+        
+        if TOKEN_MONITORING_AVAILABLE and token_monitoring_active:
+            try:
+                stop_monitoring()
+                token_monitoring_active = False
+                logging.info("🔍 Token monitoring stopped")
+            except Exception as e:
+                logging.error(f"Failed to stop token monitoring: {e}")
+
+    # ------------------------
+    # Monitoring Endpoints
+    # ------------------------
+
+    @app.get("/monitor/stats", tags=["Monitoring"])
+    async def get_token_stats():
+        """Get current token usage statistics"""
+        if not TOKEN_MONITORING_AVAILABLE:
+            return {"error": "Token monitoring not available"}
+        
+        try:
+            stats = get_stats()
+            return {
+                "status": "success",
+                "monitoring_active": token_monitoring_active,
+                "statistics": stats,
+                "timestamp": time.time()
+            }
+        except Exception as e:
+            logging.error(f"Error getting token stats: {e}")
+            return {"error": str(e)}
+
+    @app.get("/monitor/summary", tags=["Monitoring"])
+    async def get_token_summary():
+        """Get detailed token usage summary"""
+        if not TOKEN_MONITORING_AVAILABLE:
+            return {"error": "Token monitoring not available"}
+        
+        try:
+            from token_tracker import TokenTracker
+            tracker = TokenTracker()
+            
+            # Get basic stats
+            stats = get_stats()
+            
+            # Get detailed breakdown
+            breakdown = {}
+            for usage in tracker.usage_log:
+                call_type = usage.call_type
+                if call_type not in breakdown:
+                    breakdown[call_type] = {
+                        "calls": 0,
+                        "total_tokens": 0,
+                        "total_cost": 0,
+                        "avg_tokens_per_call": 0
+                    }
+                
+                breakdown[call_type]["calls"] += 1
+                breakdown[call_type]["total_tokens"] += usage.total_tokens
+                breakdown[call_type]["total_cost"] += usage.cost_estimate
+            
+            # Calculate averages
+            for call_type in breakdown:
+                calls = breakdown[call_type]["calls"]
+                if calls > 0:
+                    breakdown[call_type]["avg_tokens_per_call"] = breakdown[call_type]["total_tokens"] / calls
+            
+            return {
+                "status": "success",
+                "monitoring_active": token_monitoring_active,
+                "summary": {
+                    "statistics": stats,
+                    "breakdown": breakdown,
+                    "recent_calls": [
+                        {
+                            "timestamp": usage.timestamp,
+                            "call_type": usage.call_type,
+                            "function_name": usage.function_name,
+                            "input_tokens": usage.input_tokens,
+                            "output_tokens": usage.output_tokens,
+                            "total_tokens": usage.total_tokens,
+                            "cost": usage.cost_estimate,
+                            "model": usage.model
+                        }
+                        for usage in tracker.usage_log[-10:]  # Last 10 calls
+                    ]
+                },
+                "timestamp": time.time()
+            }
+        except Exception as e:
+            logging.error(f"Error getting token summary: {e}")
+            return {"error": str(e)}
+
+    @app.post("/monitor/start", tags=["Monitoring"])
+    async def start_token_monitoring():
+        """Start token monitoring"""
+        global token_monitoring_active
+        if not TOKEN_MONITORING_AVAILABLE:
+            return {"error": "Token monitoring not available"}
+        
+        if token_monitoring_active:
+            return {"message": "Monitoring is already active", "status": "already_running"}
+        
+        try:
+            start_monitoring()
+            token_monitoring_active = True
+            return {"message": "Token monitoring started", "status": "started"}
+        except Exception as e:
+            logging.error(f"Error starting monitoring: {e}")
+            return {"error": str(e)}
+
+    @app.post("/monitor/stop", tags=["Monitoring"])
+    async def stop_token_monitoring():
+        """Stop token monitoring"""
+        global token_monitoring_active
+        if not TOKEN_MONITORING_AVAILABLE:
+            return {"error": "Token monitoring not available"}
+        
+        if not token_monitoring_active:
+            return {"message": "Monitoring is not active", "status": "not_running"}
+        
+        try:
+            stop_monitoring()
+            token_monitoring_active = False
+            return {"message": "Token monitoring stopped", "status": "stopped"}
+        except Exception as e:
+            logging.error(f"Error stopping monitoring: {e}")
+            return {"error": str(e)}
 
     # ------------------------
     # API Endpoints
@@ -304,9 +464,14 @@ def create_app() -> FastAPI:
         
         history_repo = ChatHistoryRepository()
         chat_history = []
-        if request.conversation_id:
-            chat_history = history_repo.fetch_history(request.conversation_id)
-            logging.debug(f"Loaded chat history for conversation_id={request.conversation_id}: {chat_history}")
+        # Make chat history inclusion configurable
+        include_history = os.getenv("INCLUDE_CHAT_HISTORY", "false").lower() == "true"
+        if request.conversation_id and include_history:
+            # Use token-based limiting to prevent context explosion - limit to 8000 tokens
+            chat_history = history_repo.fetch_history_with_token_limit(request.conversation_id, max_tokens=8000)
+            logging.debug(f"Loaded chat history for conversation_id={request.conversation_id}: {len(chat_history)} messages")
+        else:
+            logging.debug("Chat history is disabled by config.")
 
         input_dict = {
             "input": request.input,
@@ -317,21 +482,67 @@ def create_app() -> FastAPI:
         agent_result = agent_instance.invoke(input_dict)
         logging.debug(f"[CHAT] Raw agent result: {agent_result}")
 
-        final_response = agent_result
+        final_response_data = agent_result
+        response_type = None
         
-        if request.conversation_id and isinstance(final_response, dict) and "message" in final_response:
-            history_repo.save_message(
-                request.conversation_id, 
-                request.input,
-                final_response["message"]
+        # Handle different types of agent results
+        if isinstance(agent_result, dict):
+            response_type = agent_result.get("type")
+            final_response_data = enforce_response_schema(agent_result, RESPONSE_TYPES)
+        elif isinstance(agent_result, list) and agent_result:
+            # If it's a list of responses, take the first one
+            first_result = agent_result[0]
+            if isinstance(first_result, dict):
+                response_type = first_result.get("type")
+                final_response_data = enforce_response_schema(first_result, RESPONSE_TYPES)
+            else:
+                final_response_data = first_result
+        else:
+            # If not a dict or list, it's likely plain text - try to determine the appropriate schema
+            llm = ChatOpenAI(model="gpt-4o", temperature=0)
+            
+            # Try to determine what type of data this is based on the content
+            if isinstance(agent_result, str):
+                if "order" in agent_result.lower():
+                    response_type = "orders_summary"
+                elif "loyalty" in agent_result.lower() or "card" in agent_result.lower():
+                    response_type = "loyalty_summary"
+                elif "wallet" in agent_result.lower() or "balance" in agent_result.lower():
+                    response_type = "wallet_summary"
+                else:
+                    response_type = "text_response"
+            
+            final_response_data = generate_llm_message(
+                agent_result,
+                llm,
+                schema=RESPONSE_TYPES,
+                response_type=response_type
             )
+
+        # If after enforcement, still not a dict or missing required fields, try to fix with LLM
+        if not isinstance(final_response_data, dict) or not response_type or response_type not in RESPONSE_TYPES:
+            llm = ChatOpenAI(model="gpt-4o", temperature=0)
+            final_response_data = generate_llm_message(
+                agent_result,
+                llm,
+                schema=RESPONSE_TYPES,
+                response_type="text_response"
+            )
+
+        logging.debug(f"[CHAT] Enforced response: {final_response_data}")
+
+        response_obj = ChatbotResponse(output=final_response_data)
         
-        logging.debug(f"[CHAT] Final output structure before return: {final_response}")
-        return ChatbotResponse(output=final_response)
+        # Save history if conversation_id is present
+        if request.conversation_id:
+            history_repo.save_message(request.conversation_id, request.input, response_obj.model_dump_json())
+
+        return response_obj
 
     return app
 
-# Main entry point
+app = create_app()
+
 if __name__ == "__main__":
     # Run startup test to check dependencies and connections
     try:
@@ -344,12 +555,5 @@ if __name__ == "__main__":
         exit(1)
         
     import uvicorn
-    app = create_app()
-
-    # Load the database URIs from environment variables or .env file
-    SQL_DATABASE_URI_LIVE = os.getenv("SQL_DATABASE_URI_LIVE")
-    if SQL_DATABASE_URI_LIVE:
-        logging.debug(f"SQL_DATABASE_URI_LIVE = {SQL_DATABASE_URI_LIVE}")
-
     logging.info("🟢 Starting chatbot API in 'local' environment")
     uvicorn.run(app, host="0.0.0.0", port=8000)

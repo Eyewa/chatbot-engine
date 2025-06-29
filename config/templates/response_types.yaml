@@ -1,20 +1,34 @@
 orders_summary:
+  description: "A summary of a customer's recent orders."
   fields:
-    - orders
+    - order_id
+    - order_amount
+    - status
+    - created_at
     - customer_name
+    - orders # for list of orders
+  instructions: "The response should have a 'type' field set to 'orders_summary' and an 'orders' array containing order objects with fields like order_id, order_amount, customer_name, status, created_at."
 
 loyalty_summary:
+  description: "A summary of a customer's loyalty card and points."
   fields:
     - card_number
-    - activation_date
-    - expiry_date
     - status
+    - points_balance
+    - expiry_date
+  instructions: "The response should have a 'type' field set to 'loyalty_summary' and fields like card_number, status, points_balance, expiry_date."
 
 wallet_summary:
+  description: "A summary of a customer's wallet balance and transactions."
   fields:
-    - loyalty_points
-    - credits_points
+    - customer_balance
+    - cashback_balance
+    - credits_balance
+    - transactions
+  instructions: "The response should have a 'type' field set to 'wallet_summary' and fields like customer_balance, cashback_balance, credits_balance, transactions."
 
 text_response:
+  description: "A generic text response for when structured data cannot be returned."
   fields:
     - message
+  instructions: "The response should have a 'type' field set to 'text_response' and a 'message' field containing the response text." 

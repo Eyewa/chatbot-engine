@@ -6,6 +6,7 @@ import os
 import logging
 import json
 from openai import OpenAI
+import typing
 
 try:
     from langchain_openai import ChatOpenAI
@@ -124,15 +125,20 @@ def classify(query: str) -> Dict[str, Any]:
     
     full_prompt = f"{prompt_template}\n\n{user_prompt}"
 
-    logging.debug(f"[Classifier] Prompt to LLM:\n{full_prompt}")
+    logging.debug(f"[Classifier] Prompt to LLM (JSON enforcement={'returns JSON' in prompt_template or 'JSON output' in prompt_template}):\n{full_prompt}")
+    messages = [
+        {"role": "system", "content": "You are a helpful assistant that returns JSON."},
+        {"role": "user", "content": full_prompt}
+    ]
+    # The OpenAI Python SDK expects a list of dicts with 'role' and 'content'.
+    # Type checkers may complain, but this is the correct runtime format.
+    # type: ignore
+    logging.debug(f"[Classifier] Messages sent to LLM: {json.dumps(messages, indent=2)}")
 
     try:
         response = client.chat.completions.create(
             model="gpt-4o",
-            messages=[
-                {"role": "system", "content": "You are a helpful assistant that returns JSON."},
-                {"role": "user", "content": full_prompt}
-            ],
+            messages=messages,  # type: ignore
             response_format={"type": "json_object"},
             temperature=0,
         )
@@ -140,6 +146,18 @@ def classify(query: str) -> Dict[str, Any]:
         logging.debug(f"[Classifier] Raw LLM Output: {llm_output}")
         if not llm_output:
             raise ValueError("LLM returned an empty response.")
+        # Token tracking
+        try:
+            from token_tracker import track_llm_call
+            track_llm_call(
+                call_type="classification",
+                function_name="classify",
+                prompt=json.dumps(messages),
+                response=llm_output,
+                model="gpt-4o"
+            )
+        except Exception as e:
+            logging.warning(f"[TokenTracker] Could not track tokens: {e}")
         return json.loads(llm_output)
     except Exception as e:
         logging.error(f"[Classifier] Error during LLM call: {e}", exc_info=True)
