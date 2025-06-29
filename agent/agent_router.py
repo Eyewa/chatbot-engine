@@ -191,8 +191,8 @@ def _create_common_agent():
         allowed = list(schema.get('common', {}).get('tables', {}).keys())
     except Exception as e:
         logging.error(f"Could not load schema config: {e}")
-        # Fallback to hardcoded list
-        allowed = ["customer_loyalty_card", "customer_loyalty_ledger", "customer_wallet"]
+        # Use empty list instead of hardcoded fallback
+        allowed = []
     
     # Build a strict prompt
     builder = PromptBuilder()
@@ -323,8 +323,18 @@ def _combine_responses(resp_live, resp_common, user_query=None):
             # Fetch customer info from DB (config-driven fields)
             customer_fields = response_types.get("customer_summary", {}).get("fields", [])
             if customer_fields:
-                # Build SQL dynamically from schema
-                table = "customer_entity"
+                # Find the customer table from schema (config-driven)
+                customer_table = None
+                live_tables = schema.get('live', {}).get('tables', {})
+                for table_name, table_info in live_tables.items():
+                    if 'customer' in table_name.lower() and 'entity' in table_name.lower():
+                        customer_table = table_name
+                        break
+                
+                if not customer_table:
+                    logging.warning("Could not find customer table in schema")
+                    return combined_responses
+                
                 select_fields = []
                 for f in customer_fields:
                     if "field_mappings" in schema and f in schema["field_mappings"]:
@@ -333,7 +343,7 @@ def _combine_responses(resp_live, resp_common, user_query=None):
                     else:
                         select_fields.append(f)
                 select_fields = list(set(select_fields))
-                sql = f"SELECT {', '.join(select_fields)} FROM {table} WHERE entity_id = {customer_id}"
+                sql = f"SELECT {', '.join(select_fields)} FROM {customer_table} WHERE entity_id = {customer_id}"
                 rows = run_sql_query(sql, db="live")
                 if rows:
                     customer_data = rows[0]

@@ -126,8 +126,8 @@ def get_live_sql_tools():
         allowed = list(schema.get('live', {}).get('tables', {}).keys())
     except Exception as e:
         logging.error(f"Could not load schema config: {e}")
-        # Fallback to hardcoded list
-        allowed = ["sales_order", "customer_entity", "order_meta_data", "sales_order_address", "sales_order_payment"]
+        # Use empty list instead of hardcoded fallback
+        allowed = []
     
     return _create_sql_tools(uri, allowed, "live")
 
@@ -148,8 +148,8 @@ def get_common_sql_tools():
         allowed = list(schema.get('common', {}).get('tables', {}).keys())
     except Exception as e:
         logging.error(f"Could not load schema config: {e}")
-        # Fallback to hardcoded list
-        allowed = ["customer_loyalty_card", "customer_loyalty_ledger", "customer_wallet"]
+        # Use empty list instead of hardcoded fallback
+        allowed = []
     
     return _create_sql_tools(uri, allowed, "common")
 

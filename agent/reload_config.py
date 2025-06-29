@@ -37,14 +37,11 @@ def reload_config():
 def reload_response_types():
     """Reload response types configuration."""
     try:
-        # Import and reload the response types
-        import main
-        
-        # Reload the response types
-        main.RESPONSE_TYPES = safe_load("config/templates/response_types.yaml")
+        # Load response types directly from config
+        response_types = safe_load("config/templates/response_types.yaml")
         
         logging.info("✅ Response types reloaded via /admin/reload-response-types")
-        return {"status": "✅ Response types reloaded", "types": list(main.RESPONSE_TYPES.keys())}
+        return {"status": "✅ Response types reloaded", "types": list(response_types.keys())}
     except Exception as e:
         logging.error(f"❌ Failed to reload response types: {e}")
         return {"status": "❌ Failed to reload response types", "error": str(e)}
@@ -70,20 +67,26 @@ def rebuild_sql_tools(db_type: str):
 
     if db_type == "live":
         uri = os.getenv("SQL_DATABASE_URI_LIVE")
-        allowed = [
-            "sales_order",
-            "customer_entity",
-            "order_meta_data",
-            "sales_order_address",
-            "sales_order_payment",
-        ]
+        # Load allowed tables from schema
+        schema_path = os.path.join("config", "schema", "schema.yaml")
+        try:
+            with open(schema_path, 'r') as f:
+                schema = yaml.safe_load(f)
+            allowed = list(schema.get('live', {}).get('tables', {}).keys())
+        except Exception as e:
+            logging.error(f"Could not load schema config: {e}")
+            allowed = []
     elif db_type == "common":
         uri = os.getenv("SQL_DATABASE_URI_COMMON")
-        allowed = [
-            "customer_loyalty_card",
-            "customer_loyalty_ledger",
-            "customer_wallet",
-        ]
+        # Load allowed tables from schema
+        schema_path = os.path.join("config", "schema", "schema.yaml")
+        try:
+            with open(schema_path, 'r') as f:
+                schema = yaml.safe_load(f)
+            allowed = list(schema.get('common', {}).get('tables', {}).keys())
+        except Exception as e:
+            logging.error(f"Could not load schema config: {e}")
+            allowed = []
     else:
         return None
 
