@@ -3,6 +3,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 import ast
+import yaml
 
 try:
     import yaml  # type: ignore

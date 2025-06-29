@@ -7,6 +7,7 @@ from typing import Optional, Any
 import os
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
+import yaml
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -279,8 +280,6 @@ def _combine_responses(resp_live, resp_common):
     logging.debug(f"[_combine_responses] resp_live: {resp_live}, resp_common: {resp_common}")
     
     # Load query routing configuration for merge strategies
-    import yaml
-    import os
     config_path = os.path.join("config", "query_routing.yaml")
     try:
         with open(config_path, 'r') as f:
@@ -321,11 +320,9 @@ def _combine_responses(resp_live, resp_common):
         allowed_fields = set()
         if summary_type:
             try:
-                from simple_yaml import safe_load
-                import os
                 schema_path = os.path.join("config", "templates", "response_types.yaml")
                 with open(schema_path) as f:
-                    response_types = safe_load(f)
+                    response_types = yaml.safe_load(f)
                 allowed_fields = set(response_types.get(summary_type, {}).get("fields", []))
             except Exception as e:
                 logging.warning(f"[GENERIC FLATTEN] Could not load response_types.yaml: {e}")
@@ -469,10 +466,6 @@ def extract_focused_prompt(user_query, db):
     """
     Extract the part of the user query relevant to the given db (live/common) using config-driven rules.
     """
-    import yaml
-    import os
-    
-    # Load query routing configuration
     config_path = os.path.join("config", "query_routing.yaml")
     try:
         with open(config_path, 'r') as f:
@@ -754,3 +747,7 @@ def get_routed_agent():
     )  # type: ignore
 
     return router
+
+def safe_load(file_path):
+    with open(file_path, 'r', encoding='utf-8') as f:
+        return yaml.safe_load(f)

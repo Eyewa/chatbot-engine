@@ -7,6 +7,7 @@ from agent.prompt_builder import PromptBuilder
 from langchain_community.utilities.sql_database import SQLDatabase
 from langchain_community.agent_toolkits.sql.toolkit import SQLDatabaseToolkit
 from langchain_openai import ChatOpenAI
+import yaml
 
 router = APIRouter()
 
@@ -37,7 +38,6 @@ def reload_response_types():
     """Reload response types configuration."""
     try:
         # Import and reload the response types
-        from simple_yaml import safe_load
         import main
         
         # Reload the response types
@@ -48,6 +48,11 @@ def reload_response_types():
     except Exception as e:
         logging.error(f"❌ Failed to reload response types: {e}")
         return {"status": "❌ Failed to reload response types", "error": str(e)}
+
+
+def safe_load(file_path):
+    with open(file_path, 'r', encoding='utf-8') as f:
+        return yaml.safe_load(f)
 
 
 def _rename_tools(tools, suffix: str):

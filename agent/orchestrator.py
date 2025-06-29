@@ -13,10 +13,7 @@ from tools.sql_toolkit_factory import (
 from .prompt_builder import PromptBuilder
 from agent.dynamic_sql_builder import load_schema, build_dynamic_sql, get_field_alias
 
-try:
-    import yaml
-except Exception:
-    import simple_yaml as yaml
+import yaml
 
 
 def _build_sql(table: str, fields: List[str], filters: Dict[str, Any] = {}) -> str:

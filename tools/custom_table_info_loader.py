@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import List
 import json
 import re
+import yaml
 
 try:
     import yaml  # type: ignore

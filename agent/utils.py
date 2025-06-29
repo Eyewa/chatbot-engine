@@ -1,6 +1,15 @@
+import yaml
+
+def safe_load(file_path):
+    if isinstance(file_path, str):
+        with open(file_path, 'r', encoding='utf-8') as f:
+            return yaml.safe_load(f)
+    else:
+        # If a file object is passed, just use yaml.safe_load directly
+        return yaml.safe_load(file_path)
+
 def filter_response_by_type(response_json: dict) -> dict:
     # Import RESPONSE_TYPES locally to avoid circular import
-    from simple_yaml import safe_load
     import os
     RESPONSE_TYPES = None
     if os.path.exists(os.path.join("config", "templates", "response_types.yaml")):

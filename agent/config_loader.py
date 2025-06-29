@@ -4,10 +4,7 @@ import os
 import logging
 from typing import Dict, Any, List, Optional
 
-try:
-    import yaml
-except Exception:
-    import simple_yaml as yaml
+import yaml
 
 
 class ConfigLoader:

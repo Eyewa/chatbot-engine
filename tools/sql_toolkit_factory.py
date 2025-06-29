@@ -8,10 +8,7 @@ import re
 
 from sqlalchemy import text
 
-try:
-    import yaml
-except Exception:
-    import simple_yaml as yaml
+import yaml
 
 try:
     from dotenv import load_dotenv  # type: ignore
