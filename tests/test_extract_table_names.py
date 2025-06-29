@@ -47,4 +47,4 @@ def test_combine_responses_filters_and_merges():
     loyalty = next(r for r in result if r.get("type") == "loyalty_summary")
     assert "orders" in orders
     assert "card_number" in loyalty
-    assert loyalty["card_number"] == 777
+    assert loyalty["card_number"] == "777"

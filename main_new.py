@@ -92,6 +92,14 @@ def create_app() -> FastAPI:
     app.include_router(monitoring_router)
     app.include_router(admin_router)
     
+    # Include logging dashboard router
+    try:
+        from app.api.routes.logging_dashboard import router as logging_dashboard_router
+        app.include_router(logging_dashboard_router)
+        logger.info("✅ Logging dashboard router included")
+    except ImportError as e:
+        logger.warning(f"⚠️ Could not include logging dashboard router: {e}")
+    
     # Include existing reload router
     try:
         from agent.reload_config import router as reload_router

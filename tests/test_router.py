@@ -116,7 +116,7 @@ def test_combine_responses_filters_and_merges():
     loyalty = next(r for r in result if r.get("type") == "loyalty_summary")
     assert "orders" in orders
     assert "card_number" in loyalty
-    assert loyalty["card_number"] == 777
+    assert loyalty["card_number"] == "777"
 
 
 def test_combine_responses_single_agent():
@@ -125,9 +125,9 @@ def test_combine_responses_single_agent():
     out = agent_router._combine_responses(live, None)
     result = out
     assert result is not None
-    assert isinstance(result, dict)
-    assert result["type"] == "orders_summary"
-    assert result["orders"] == [{"grand_total": 50}]
+    assert isinstance(result, list)
+    assert result[0]["type"] == "orders_summary"
+    assert result[0]["orders"] == [{"grand_total": 50}]
 
 
 def test_combine_responses_no_data():

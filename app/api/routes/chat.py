@@ -1,6 +1,7 @@
 """
 Chat API routes.
 Handles chat endpoints and conversation management.
+Now with enhanced comprehensive logging!
 """
 
 import logging
@@ -31,13 +32,22 @@ async def chat_endpoint(
 ) -> ChatbotResponse:
     """
     Process a chat message and return a response.
+    Now with enhanced comprehensive logging!
+    
+    This endpoint now tracks every detail of the conversation:
+    - User input and final output
+    - All LLM calls with token usage and costs
+    - SQL queries executed
+    - Performance metrics
+    - Error details and debugging info
+    - Chat history based on conversation_id
     
     Args:
         request: Chat request containing user input and context
         chat_service: Chat service instance
         
     Returns:
-        Chatbot response
+        Chatbot response with comprehensive logging
         
     Raises:
         HTTPException: If there's an error processing the request
@@ -45,7 +55,7 @@ async def chat_endpoint(
     try:
         logger.debug(f"[CHAT] Received request: {request.dict()}")
         
-        # Process the chat request
+        # Process the chat request with enhanced logging
         response_data = await chat_service.chat(
             user_input=request.input,
             conversation_id=request.conversation_id,
@@ -53,7 +63,7 @@ async def chat_endpoint(
             summarize=request.summarize
         )
         
-        # Unpack conversation_message and output
+        # Extract conversation_message and output
         if isinstance(response_data, dict) and "conversation_message" in response_data and "output" in response_data:
             conversation_message = response_data.get("conversation_message")
             output = response_data.get("output")
@@ -64,13 +74,8 @@ async def chat_endpoint(
         # Create response object
         response_obj = ChatbotResponse(conversation_message=conversation_message, output=output)
         
-        # Save chat history if conversation_id is present
-        if request.conversation_id:
-            chat_service.save_chat_history(
-                request.conversation_id,
-                request.input,
-                response_obj.model_dump_json()
-            )
+        # Note: Chat history is now automatically saved by the enhanced logging system
+        # No need to manually save it here anymore
         
         logger.debug(f"[CHAT] Response: {response_data}")
         return response_obj

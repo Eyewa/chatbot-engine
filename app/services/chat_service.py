@@ -1,17 +1,22 @@
 """
 Chat service for orchestrating chatbot functionality.
 Handles agent invocation, response processing, and history management.
+Now with enhanced comprehensive logging!
 """
 
 import logging
 import os
 import yaml
-from typing import Any, Dict, List, Optional
+import time
+import uuid
+from typing import Any, Dict, List, Optional, Union
 
 from langchain_openai import ChatOpenAI
+from sqlalchemy import text
 
 from agent.agent import build_chatbot_agent
-from agent.chat_history_repository import ChatHistoryRepository
+from agent.chat_logger import get_chat_logger
+from agent.token_tracker import get_token_tracker
 from agent.utils import generate_llm_message
 from ..core.config import get_settings
 from ..utils.response_formatter import (
@@ -24,13 +29,14 @@ logger = logging.getLogger(__name__)
 
 
 class ChatService:
-    """Service for handling chat operations."""
+    """Service for handling chat operations with enhanced logging."""
     
     def __init__(self):
         self.settings = get_settings()
         self._agent = None
         self._llm = None
-        self._history_repo = ChatHistoryRepository()
+        self._chat_logger = get_chat_logger()
+        self._token_tracker = get_token_tracker()
     
     @property
     def agent(self):
@@ -58,48 +64,92 @@ class ChatService:
             )
         return self._llm
     
+    def _extract_sql_queries(self, debug_info: Optional[Dict[str, Any]]) -> List[str]:
+        """Extract SQL queries from debug info"""
+        sql_queries = []
+        if debug_info:
+            # Look for SQL queries in various debug info locations
+            for key in ['sql_queries', 'queries', 'sql', 'executed_sql']:
+                if key in debug_info:
+                    queries = debug_info[key]
+                    if isinstance(queries, list):
+                        sql_queries.extend(queries)
+                    elif isinstance(queries, str):
+                        sql_queries.append(queries)
+            
+            # Also check for SQL in tool calls
+            if 'tool_calls' in debug_info:
+                for tool_call in debug_info['tool_calls']:
+                    if isinstance(tool_call, dict) and 'args' in tool_call:
+                        args = tool_call['args']
+                        if isinstance(args, dict) and 'query' in args:
+                            sql_queries.append(args['query'])
+        
+        return sql_queries
+    
+    def _extract_sql_results_count(self, debug_info: Optional[Dict[str, Any]]) -> Optional[int]:
+        """Extract SQL results count from debug info"""
+        if debug_info:
+            # Look for result counts in various locations
+            for key in ['sql_results_count', 'results_count', 'row_count', 'count']:
+                if key in debug_info:
+                    count = debug_info[key]
+                    if isinstance(count, int):
+                        return count
+        return None
+    
+    def _extract_debug_info(self, agent_result: Any) -> Optional[Dict[str, Any]]:
+        """Extract debug information from agent result"""
+        debug_info = {}
+        
+        if isinstance(agent_result, dict):
+            # Extract common debug fields
+            for key in ['intent', 'classification', 'database_used', 'debug_info', 'metadata']:
+                if key in agent_result:
+                    debug_info[key] = agent_result[key]
+            
+            # Extract tool calls if available
+            if 'intermediate_steps' in agent_result:
+                debug_info['tool_calls'] = agent_result['intermediate_steps']
+        
+        return debug_info if debug_info else None
+    
     def get_chat_history(self, conversation_id: Optional[str]) -> List[str]:
         """
         Get chat history for a conversation.
+        Now uses enhanced logging system for better performance and limited history.
         
         Args:
             conversation_id: Conversation identifier
             
         Returns:
-            List of chat history messages
+            List of chat history messages (limited to 0 messages for now)
         """
         if not conversation_id or not self.settings.chat.include_chat_history:
             logger.debug("Chat history is disabled by config.")
             return []
         
         try:
-            history = self._history_repo.fetch_history_with_token_limit(
-                conversation_id, 
-                max_tokens=self.settings.chat.max_history_tokens
-            )
-            logger.debug(f"Loaded chat history for conversation_id={conversation_id}: {len(history)} messages")
-            return history
+            # Get 0 recent messages for now (no history)
+            history = self._chat_logger.get_conversation_details(conversation_id)
+            if history and 'messages' in history:
+                messages = history['messages']
+                # Take 0 recent messages (no history)
+                recent_messages = messages[-0:] if len(messages) > 0 else []
+                
+                # Convert to flat list
+                flat_history = []
+                for msg in recent_messages:
+                    flat_history.append(msg['user_input'])
+                    flat_history.append(msg['final_output'])
+                
+                logger.debug(f"Loaded recent chat history for conversation_id={conversation_id}: {len(flat_history)} messages")
+                return flat_history
+            else:
+                return []
         except Exception as e:
             logger.error(f"Error loading chat history: {e}")
             return []
-    
-    def save_chat_history(self, conversation_id: str, user_input: str, response: str) -> None:
-        """
-        Save chat message to history.
-        
-        Args:
-            conversation_id: Conversation identifier
-            user_input: User's input message
-            response: Bot's response
-        """
-        if not conversation_id:
-            return
-        
-        try:
-            self._history_repo.save_message(conversation_id, user_input, response)
-            logger.debug(f"Saved message to conversation {conversation_id}")
-        except Exception as e:
-            logger.error(f"Error saving chat history: {e}")
     
     def process_agent_result(self, agent_result: Any) -> Any:
         """
@@ -149,7 +199,6 @@ class ChatService:
         
         else:
             # If not a dict or list, it's likely plain text - try to determine the appropriate schema
-            # Try to determine what type of data this is based on the content
             if isinstance(agent_result, str):
                 # Load response type detection configuration
                 config_path = os.path.join("config", "query_routing.yaml")
@@ -178,7 +227,6 @@ class ChatService:
             )
 
         # If after enforcement, still not a dict or missing required fields, try to fix with LLM
-        # Only run LLM fallback if not a dict or a list of dicts with 'type'
         if (
             not isinstance(final_response_data, dict)
             and not (
@@ -204,7 +252,7 @@ class ChatService:
         summarize: bool = False
     ) -> Any:
         """
-        Process a chat message.
+        Process a chat message with enhanced comprehensive logging.
         
         Args:
             user_input: User's input message
@@ -213,8 +261,18 @@ class ChatService:
             summarize: Whether to summarize the response
             
         Returns:
-            Processed chat response
+            Processed chat response with comprehensive logging
         """
+        # Generate conversation_id if not provided
+        if not conversation_id:
+            conversation_id = str(uuid.uuid4())
+        
+        # Start tracking this conversation message
+        message_id = self._chat_logger.start_conversation_message(conversation_id, user_input)
+        
+        # Track overall conversation timing
+        conversation_start_time = time.time()
+        
         try:
             # Get chat history if not provided
             if chat_history is None:
@@ -226,24 +284,111 @@ class ChatService:
                 "chat_history": chat_history,
             }
             
-            # Invoke agent
-            agent_result = self.agent.invoke(input_dict)
+            # Track agent invocation
+            agent_start_time = time.time()
+            with self._chat_logger.track_llm_call(
+                conversation_id=conversation_id,
+                message_id=message_id,
+                model="gpt-4o",  # The model used by the agent
+                function_name="agent_invoke",
+                input_text=str(input_dict)
+            ) as call_tracker:
+                agent_result = self.agent.invoke(input_dict)
+                agent_duration_ms = (time.time() - agent_start_time) * 1000
+                
+                # Set the output details for tracking
+                # Note: We don't have exact token counts from the agent, so we'll estimate
+                output_text = str(agent_result)
+                estimated_input_tokens = len(str(input_dict).split()) * 1.3  # Rough estimate
+                estimated_output_tokens = len(output_text.split()) * 1.3  # Rough estimate
+                estimated_cost = (estimated_input_tokens * 0.000005) + (estimated_output_tokens * 0.000015)  # GPT-4o pricing
+                
+                call_tracker.set_output(
+                    output_text=output_text,
+                    input_tokens=int(estimated_input_tokens),
+                    output_tokens=int(estimated_output_tokens),
+                    cost_estimate=estimated_cost,
+                    metadata={"agent_duration_ms": agent_duration_ms}
+                )
             
             # Process and format the result
             final_response = self.process_agent_result(agent_result)
+            
+            # Generate conversation message
+            conversation_message = await self._generate_conversation_message(user_input, final_response)
+            
+            # Extract debug info and SQL queries
+            debug_info = self._extract_debug_info(agent_result)
+            sql_queries = self._extract_sql_queries(debug_info)
+            sql_results_count = self._extract_sql_results_count(debug_info)
+            
+            # Complete conversation message logging
+            conversation_duration_ms = (time.time() - conversation_start_time) * 1000
+            
+            # Get LLM call summary from the logger
+            conversation_details = self._chat_logger.get_conversation_details(conversation_id)
+            llm_calls = conversation_details.get('llm_calls', [])
+            total_llm_calls = len(llm_calls)
+            total_tokens_used = sum(call.get('total_tokens', 0) for call in llm_calls)
+            total_cost = sum(call.get('cost_estimate', 0.0) for call in llm_calls)
+            
+            self._chat_logger.complete_conversation_message(
+                message_id=message_id,
+                final_output=str(final_response),
+                conversation_message=conversation_message,
+                intent=debug_info.get('intent') if debug_info else None,
+                classification=debug_info.get('classification') if debug_info else None,
+                database_used=debug_info.get('database_used') if debug_info else None,
+                sql_queries=sql_queries,
+                sql_results_count=sql_results_count,
+                success=True,
+                debug_info=debug_info
+            )
+            
+            # Update conversation message with LLM call summary
+            with self._chat_logger.engine.begin() as conn:
+                conn.execute(text("""
+                    UPDATE chatbot_conversation_messages 
+                    SET total_llm_calls = :total_llm_calls,
+                        total_tokens_used = :total_tokens_used,
+                        total_cost = :total_cost,
+                        total_duration_ms = :total_duration_ms
+                    WHERE message_id = :message_id
+                """), {
+                    "message_id": message_id,
+                    "total_llm_calls": total_llm_calls,
+                    "total_tokens_used": total_tokens_used,
+                    "total_cost": total_cost,
+                    "total_duration_ms": conversation_duration_ms
+                })
+            
+            logger.info(f"Chat completed with enhanced logging - Conversation: {conversation_id}, Duration: {conversation_duration_ms:.2f}ms")
+            
+            return {
+                "conversation_message": conversation_message,
+                "output": final_response,
+                "conversation_id": conversation_id,
+                "message_id": message_id
+            }
+            
         except Exception as e:
-            logger.error(f"Error in chat service: {e}", exc_info=True)
+            # Log error
+            conversation_duration_ms = (time.time() - conversation_start_time) * 1000
+            self._chat_logger.complete_conversation_message(
+                message_id=message_id,
+                final_output=str(e),
+                success=False,
+                error_message=str(e),
+                debug_info={"error": str(e), "traceback": str(e.__traceback__)}
+            )
+            
+            logger.error(f"Chat failed with enhanced logging - Conversation: {conversation_id}, Error: {e}", exc_info=True)
             return {
                 "conversation_message": None,
-                "output": str(e)
+                "output": str(e),
+                "conversation_id": conversation_id,
+                "message_id": message_id
             }
-
-        # Generate a human-readable message using the LLM
-        conversation_message = await self._generate_conversation_message(user_input, final_response)
-        return {
-            "conversation_message": conversation_message,
-            "output": final_response
-        }
 
     async def _generate_conversation_message(self, user_input, final_response):
         """
