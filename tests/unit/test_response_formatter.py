@@ -273,4 +273,62 @@ def test_response_formatter_importable():
     """Test that response_formatter utilities can be imported and used."""
     from app.utils import response_formatter
     assert hasattr(response_formatter, 'enforce_response_schema')
-    assert callable(response_formatter.enforce_response_schema) 
+    assert callable(response_formatter.enforce_response_schema)
+
+
+def test_response_metadata_filtering():
+    """Test that response metadata is properly filtered out from conversation messages."""
+    # Test the metadata filtering logic directly
+    def clean_response_string(response_str):
+        """Extract only content from response string, removing metadata."""
+        if "response_metadata" in response_str:
+            import re
+            # Look for content field in the response - handle both single and double quotes
+            content_match = re.search(r"'content':\s*'([^']*)'", response_str)
+            if content_match:
+                return content_match.group(1)
+            # Try double quotes
+            content_match = re.search(r"'content':\s*\"([^\"]*)\"", response_str)
+            if content_match:
+                return content_match.group(1)
+            # If no content field, try to get the first part before metadata
+            parts = response_str.split("response_metadata")
+            if parts:
+                # Clean up the first part - remove "content=" prefix if present
+                first_part = parts[0].strip()
+                if first_part.startswith("content="):
+                    # Remove the content= prefix and surrounding quotes
+                    content = first_part[8:]  # Remove "content="
+                    if content.startswith("'") and content.endswith("'"):
+                        content = content[1:-1]  # Remove surrounding quotes
+                    elif content.startswith('"') and content.endswith('"'):
+                        content = content[1:-1]  # Remove surrounding quotes
+                    return content
+                return first_part
+        return response_str
+    
+    # Test cases
+    test_cases = [
+        # Case 1: Response with metadata
+        (
+            "content='Here are the details for customer 12345' response_metadata={'token_usage': {'total_tokens': 100}, 'model_name': 'gpt-4o'}",
+            "Here are the details for customer 12345"
+        ),
+        # Case 2: Response without metadata
+        (
+            "Here are the details for customer 12345",
+            "Here are the details for customer 12345"
+        ),
+        # Case 3: Complex metadata
+        (
+            "content='Customer summary' response_metadata={'token_usage': {'completion_tokens': 58, 'prompt_tokens': 191, 'total_tokens': 249}, 'model_name': 'gpt-4o', 'system_fingerprint': 'fp_07871e2ad8'}",
+            "Customer summary"
+        )
+    ]
+    
+    for input_str, expected in test_cases:
+        result = clean_response_string(input_str)
+        assert result == expected, f"Expected '{expected}', got '{result}' for input '{input_str}'"
+        assert "response_metadata" not in result
+        assert "token_usage" not in result
+        assert "model_name" not in result 

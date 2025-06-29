@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 class ChatbotResponse(BaseModel):
     """Response model for chatbot chat endpoint."""
     
+    conversation_message: Optional[str] = Field(default=None, description="Human-readable message contextualizing the output")
     output: Any = Field(..., description="Chatbot's concise reply (can be a dict or a list of dicts)")
 
 

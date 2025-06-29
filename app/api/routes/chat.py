@@ -53,8 +53,16 @@ async def chat_endpoint(
             summarize=request.summarize
         )
         
+        # Unpack conversation_message and output
+        if isinstance(response_data, dict) and "conversation_message" in response_data and "output" in response_data:
+            conversation_message = response_data.get("conversation_message")
+            output = response_data.get("output")
+        else:
+            conversation_message = None
+            output = response_data
+        
         # Create response object
-        response_obj = ChatbotResponse(output=response_data)
+        response_obj = ChatbotResponse(conversation_message=conversation_message, output=output)
         
         # Save chat history if conversation_id is present
         if request.conversation_id:
