@@ -10,6 +10,7 @@ import yaml
 import time
 import uuid
 from typing import Any, Dict, List, Optional, Union
+import inspect
 
 from langchain_openai import ChatOpenAI
 from sqlalchemy import text
@@ -283,7 +284,17 @@ class ChatService:
                 "input": user_input,
                 "chat_history": chat_history,
             }
-            
+
+            # Prepare metadata for LangSmith
+            metadata = {
+                "conversation_id": conversation_id,
+                "message_id": message_id
+            }
+            # Optionally add user_id if available in input_dict or context
+            user_id = input_dict.get("user_id") or None
+            if user_id:
+                metadata["user_id"] = user_id
+
             # Track agent invocation
             agent_start_time = time.time()
             with self._chat_logger.track_llm_call(
@@ -293,7 +304,15 @@ class ChatService:
                 function_name="agent_invoke",
                 input_text=str(input_dict)
             ) as call_tracker:
-                agent_result = self.agent.invoke(input_dict)
+                try:
+                    invoke_sig = inspect.signature(self.agent.invoke)
+                    if 'config' in invoke_sig.parameters:
+                        agent_result = self.agent.invoke(input_dict, config={"metadata": metadata})
+                    else:
+                        agent_result = self.agent.invoke(input_dict)
+                    agent_duration_ms = (time.time() - agent_start_time) * 1000
+                except TypeError:
+                    agent_result = self.agent.invoke(input_dict)
                 agent_duration_ms = (time.time() - agent_start_time) * 1000
                 
                 # Set the output details for tracking

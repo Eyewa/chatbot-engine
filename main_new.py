@@ -7,6 +7,7 @@ import logging
 import subprocess
 import sys
 from contextlib import asynccontextmanager
+import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,6 +17,17 @@ from app.core.logging import setup_logging, get_logger
 from app.api.middleware.error_handler import register_exception_handlers
 from app.api.routes import chat_router, monitoring_router, admin_router
 from app.services.monitoring_service import MonitoringService
+
+# LangSmith integration: set environment variables if not already set
+if not os.environ.get("LANGCHAIN_API_KEY"):
+    api_key = os.getenv("LANGCHAIN_API_KEY")
+    if not api_key:
+        print("[LangSmith] Warning: LANGCHAIN_API_KEY not set. Tracing will not be enabled.")
+    else:
+        os.environ["LANGCHAIN_API_KEY"] = api_key
+
+os.environ["LANGCHAIN_TRACING_V2"] = "true"
+os.environ["LANGCHAIN_PROJECT"] = os.environ.get("LANGCHAIN_PROJECT", "chatbot-engine")
 
 # Setup logging
 setup_logging()

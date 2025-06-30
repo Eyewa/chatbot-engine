@@ -22,3 +22,5 @@ sse_starlette>=0.1.3     # For real-time server events / streaming
 pytest>=7.0
 sqlparse>=0.4.4
 sentence-transformers
+
+langsmith
