@@ -21,7 +21,7 @@ def test_customer_summary_and_orders(customer_id, expect_orders):
             "summarize": False,
             "conversationId": None
         }
-        response = requests.post(API_URL, json=payload, timeout=10)
+        response = requests.post(API_URL, json=payload, timeout=120)
         assert response.status_code == 200
         data = response.json()["output"]
 

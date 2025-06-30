@@ -101,71 +101,27 @@ class ChatLogger:
         try:
             logger.info("Ensuring chat logger tables exist...")
             with self.engine.begin() as conn:
-                # Table 1: Conversation Messages (main conversation tracking)
+                # Table: Conversation Messages (minimal chat history)
                 logger.debug("Creating chatbot_conversation_messages table...")
                 conn.execute(text("""
                     CREATE TABLE IF NOT EXISTS chatbot_conversation_messages (
                         id BIGINT AUTO_INCREMENT PRIMARY KEY,
                         message_id VARCHAR(255) NOT NULL,
                         conversation_id VARCHAR(255) NOT NULL,
-                        user_input TEXT NOT NULL,
-                        final_output TEXT NOT NULL,
-                        conversation_message TEXT,
+                        user_id VARCHAR(255),
+                        sender VARCHAR(10) NOT NULL,
+                        message_text TEXT NOT NULL,
                         intent VARCHAR(100),
-                        classification VARCHAR(100),
-                        database_used VARCHAR(50),
-                        sql_queries JSON,
-                        sql_results_count INT,
-                        total_llm_calls INT NOT NULL DEFAULT 0,
-                        total_tokens_used INT NOT NULL DEFAULT 0,
-                        total_cost DECIMAL(10,6) NOT NULL DEFAULT 0,
-                        total_duration_ms DECIMAL(10,2) NOT NULL DEFAULT 0,
-                        success BOOLEAN NOT NULL DEFAULT TRUE,
-                        error_message TEXT,
-                        debug_info JSON,
+                        context JSON,
                         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        
                         INDEX idx_conversation_id (conversation_id),
                         INDEX idx_message_id (message_id),
                         INDEX idx_timestamp (timestamp),
-                        INDEX idx_intent (intent),
-                        INDEX idx_success (success)
+                        INDEX idx_intent (intent)
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
                 """))
-                
-                # Table 2: LLM Calls (detailed LLM call tracking)
-                logger.debug("Creating chatbot_llm_calls table...")
-                conn.execute(text("""
-                    CREATE TABLE IF NOT EXISTS chatbot_llm_calls (
-                        id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                        call_id VARCHAR(255) NOT NULL,
-                        conversation_id VARCHAR(255) NOT NULL,
-                        message_id VARCHAR(255) NOT NULL,
-                        model VARCHAR(100) NOT NULL,
-                        function_name VARCHAR(255) NOT NULL,
-                        input_tokens INT NOT NULL,
-                        output_tokens INT NOT NULL,
-                        total_tokens INT NOT NULL,
-                        cost_estimate DECIMAL(10,6) NOT NULL,
-                        duration_ms DECIMAL(10,2) NOT NULL,
-                        input_text TEXT NOT NULL,
-                        output_text TEXT NOT NULL,
-                        success BOOLEAN NOT NULL DEFAULT TRUE,
-                        error_message TEXT,
-                        metadata JSON,
-                        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        
-                        INDEX idx_call_id (call_id),
-                        INDEX idx_conversation_id (conversation_id),
-                        INDEX idx_message_id (message_id),
-                        INDEX idx_function_name (function_name),
-                        INDEX idx_model (model),
-                        INDEX idx_timestamp (timestamp),
-                        INDEX idx_success (success)
-                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-                """))
-                
-                # Table 3: Conversation Summary (for quick lookups)
+
+                # Table: Conversation Summary (for quick lookups)
                 logger.debug("Creating chatbot_conversation_summary table...")
                 conn.execute(text("""
                     CREATE TABLE IF NOT EXISTS chatbot_conversation_summary (
@@ -174,201 +130,99 @@ class ChatLogger:
                         first_message_at TIMESTAMP NOT NULL,
                         last_message_at TIMESTAMP NOT NULL,
                         total_messages INT NOT NULL DEFAULT 0,
-                        total_llm_calls INT NOT NULL DEFAULT 0,
-                        total_tokens_used INT NOT NULL DEFAULT 0,
-                        total_cost DECIMAL(10,6) NOT NULL DEFAULT 0,
-                        total_duration_ms DECIMAL(10,2) NOT NULL DEFAULT 0,
-                        success_rate DECIMAL(5,2) NOT NULL DEFAULT 100.00,
                         last_user_input TEXT,
                         last_agent_output TEXT,
                         metadata JSON,
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                        
                         INDEX idx_conversation_id (conversation_id),
-                        INDEX idx_last_message_at (last_message_at),
-                        INDEX idx_success_rate (success_rate)
+                        INDEX idx_last_message_at (last_message_at)
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
                 """))
-                
+
                 logger.info("Chat logger tables initialized successfully")
-                
         except SQLAlchemyError as e:
             logger.error(f"Failed to initialize tables: {e}")
             raise
     
-    def start_conversation_message(self, conversation_id: str, user_input: str) -> str:
+    def start_conversation_message(self, conversation_id: str, user_id: str, message_text: str) -> str:
         """
-        Start tracking a new conversation message
-        Returns message_id for linking LLM calls
+        Start tracking a new conversation message (user or bot)
+        Returns message_id for linking
         """
         message_id = str(uuid.uuid4())
-        logger.debug(f"Starting conversation message tracking: conversation_id={conversation_id}, message_id={message_id}")
-        
+        sender = 'user'
+        timestamp = datetime.utcnow()
         try:
             with self.engine.begin() as conn:
-                logger.debug(f"Inserting into chatbot_conversation_messages...")
                 conn.execute(text("""
                     INSERT INTO chatbot_conversation_messages (
-                        message_id, conversation_id, user_input, final_output,
-                        total_llm_calls, total_tokens_used, total_cost, total_duration_ms
+                        message_id, conversation_id, user_id, sender, message_text, timestamp
                     ) VALUES (
-                        :message_id, :conversation_id, :user_input, '',
-                        0, 0, 0, 0
+                        :message_id, :conversation_id, :user_id, :sender, :message_text, :timestamp
                     )
                 """), {
                     "message_id": message_id,
                     "conversation_id": conversation_id,
-                    "user_input": user_input
+                    "user_id": user_id,
+                    "sender": sender,
+                    "message_text": message_text,
+                    "timestamp": timestamp
                 })
-                
                 # Update or create conversation summary
-                logger.debug(f"Updating chatbot_conversation_summary...")
                 conn.execute(text("""
                     INSERT INTO chatbot_conversation_summary (
-                        conversation_id, first_message_at, last_message_at, total_messages,
-                        last_user_input
+                        conversation_id, first_message_at, last_message_at, total_messages, last_user_input
                     ) VALUES (
-                        :conversation_id, NOW(), NOW(), 1, :user_input
+                        :conversation_id, :first_message_at, :last_message_at, 1, :last_user_input
                     ) ON DUPLICATE KEY UPDATE
-                        last_message_at = NOW(),
+                        last_message_at = :last_message_at,
                         total_messages = total_messages + 1,
-                        last_user_input = :user_input
+                        last_user_input = :last_user_input
                 """), {
                     "conversation_id": conversation_id,
-                    "user_input": user_input
+                    "first_message_at": timestamp,
+                    "last_message_at": timestamp,
+                    "last_user_input": message_text
                 })
-                
-                logger.debug(f"Started tracking message {message_id} for conversation {conversation_id}")
                 return message_id
-                
         except SQLAlchemyError as e:
             logger.error(f"Failed to start conversation message tracking: {e}")
-            return message_id  # Return ID even if logging fails
+            return message_id
     
-    def log_llm_call(self, llm_call: LLMCall) -> None:
-        """Log a single LLM call with detailed metrics"""
+    def complete_conversation_message(self, message_id: str, conversation_id: str, user_id: str, message_text: str, intent: Optional[str] = None, context: Optional[dict] = None, sender: str = 'bot') -> None:
+        """
+        Log a bot response or update a message with intent/context
+        """
+        timestamp = datetime.utcnow()
         try:
             with self.engine.begin() as conn:
                 conn.execute(text("""
-                    INSERT INTO chatbot_llm_calls (
-                        call_id, conversation_id, message_id, model, function_name,
-                        input_tokens, output_tokens, total_tokens, cost_estimate, duration_ms,
-                        input_text, output_text, success, error_message, metadata
+                    INSERT INTO chatbot_conversation_messages (
+                        message_id, conversation_id, user_id, sender, message_text, intent, context, timestamp
                     ) VALUES (
-                        :call_id, :conversation_id, :message_id, :model, :function_name,
-                        :input_tokens, :output_tokens, :total_tokens, :cost_estimate, :duration_ms,
-                        :input_text, :output_text, :success, :error_message, :metadata
+                        :message_id, :conversation_id, :user_id, :sender, :message_text, :intent, :context, :timestamp
                     )
                 """), {
-                    "call_id": llm_call.call_id,
-                    "conversation_id": llm_call.conversation_id,
-                    "message_id": llm_call.message_id,
-                    "model": llm_call.model,
-                    "function_name": llm_call.function_name,
-                    "input_tokens": llm_call.input_tokens,
-                    "output_tokens": llm_call.output_tokens,
-                    "total_tokens": llm_call.total_tokens,
-                    "cost_estimate": llm_call.cost_estimate,
-                    "duration_ms": llm_call.duration_ms,
-                    "input_text": llm_call.input_text,
-                    "output_text": llm_call.output_text,
-                    "success": llm_call.success,
-                    "error_message": llm_call.error_message,
-                    "metadata": llm_call.metadata
-                })
-                
-                # Update conversation message totals
-                conn.execute(text("""
-                    UPDATE chatbot_conversation_messages 
-                    SET total_llm_calls = total_llm_calls + 1,
-                        total_tokens_used = total_tokens_used + :total_tokens,
-                        total_cost = total_cost + :cost_estimate,
-                        total_duration_ms = total_duration_ms + :duration_ms
-                    WHERE message_id = :message_id
-                """), {
-                    "message_id": llm_call.message_id,
-                    "total_tokens": llm_call.total_tokens,
-                    "cost_estimate": llm_call.cost_estimate,
-                    "duration_ms": llm_call.duration_ms
-                })
-                
-                # Update conversation summary
-                conn.execute(text("""
-                    UPDATE chatbot_conversation_summary 
-                    SET total_llm_calls = total_llm_calls + 1,
-                        total_tokens_used = total_tokens_used + :total_tokens,
-                        total_cost = total_cost + :cost_estimate,
-                        total_duration_ms = total_duration_ms + :duration_ms
-                    WHERE conversation_id = :conversation_id
-                """), {
-                    "conversation_id": llm_call.conversation_id,
-                    "total_tokens": llm_call.total_tokens,
-                    "cost_estimate": llm_call.cost_estimate,
-                    "duration_ms": llm_call.duration_ms
-                })
-                
-        except SQLAlchemyError as e:
-            logger.error(f"Failed to log LLM call: {e}")
-            raise
-    
-    def complete_conversation_message(
-        self,
-        message_id: str,
-        final_output: str,
-        conversation_message: Optional[str] = None,
-        intent: Optional[str] = None,
-        classification: Optional[str] = None,
-        database_used: Optional[str] = None,
-        sql_queries: Optional[List[str]] = None,
-        sql_results_count: Optional[int] = None,
-        success: bool = True,
-        error_message: Optional[str] = None,
-        debug_info: Optional[Dict[str, Any]] = None
-    ) -> None:
-        """Complete a conversation message with final results"""
-        try:
-            with self.engine.begin() as conn:
-                conn.execute(text("""
-                    UPDATE chatbot_conversation_messages 
-                    SET final_output = :final_output,
-                        conversation_message = :conversation_message,
-                        intent = :intent,
-                        classification = :classification,
-                        database_used = :database_used,
-                        sql_queries = :sql_queries,
-                        sql_results_count = :sql_results_count,
-                        success = :success,
-                        error_message = :error_message,
-                        debug_info = :debug_info
-                    WHERE message_id = :message_id
-                """), {
                     "message_id": message_id,
-                    "final_output": final_output,
-                    "conversation_message": conversation_message,
+                    "conversation_id": conversation_id,
+                    "user_id": user_id,
+                    "sender": sender,
+                    "message_text": message_text,
                     "intent": intent,
-                    "classification": classification,
-                    "database_used": database_used,
-                    "sql_queries": json.dumps(sql_queries) if sql_queries else None,
-                    "sql_results_count": sql_results_count,
-                    "success": success,
-                    "error_message": error_message,
-                    "debug_info": json.dumps(debug_info) if debug_info else None
+                    "context": json.dumps(context) if context else None,
+                    "timestamp": timestamp
                 })
-                
-                # Update conversation summary with last outputs
-                if success:
+                # Update conversation summary with last agent output
+                if sender == 'bot':
                     conn.execute(text("""
                         UPDATE chatbot_conversation_summary 
-                        SET last_agent_output = :final_output
-                        WHERE conversation_id = (
-                            SELECT conversation_id FROM chatbot_conversation_messages 
-                            WHERE message_id = :message_id
-                        )
+                        SET last_agent_output = :message_text, last_message_at = :timestamp
+                        WHERE conversation_id = :conversation_id
                     """), {
-                        "message_id": message_id,
-                        "final_output": final_output
+                        "conversation_id": conversation_id,
+                        "message_text": message_text,
+                        "timestamp": timestamp
                     })
-                
         except SQLAlchemyError as e:
             logger.error(f"Failed to complete conversation message: {e}")
     
@@ -389,18 +243,10 @@ class ChatLogger:
                     ORDER BY timestamp ASC
                 """), {"conversation_id": conversation_id}).fetchall()
                 
-                # Get all LLM calls
-                llm_calls_result = conn.execute(text("""
-                    SELECT * FROM chatbot_llm_calls 
-                    WHERE conversation_id = :conversation_id
-                    ORDER BY timestamp ASC
-                """), {"conversation_id": conversation_id}).fetchall()
-                
                 return {
                     "conversation_id": conversation_id,
                     "summary": dict(summary_result._mapping) if summary_result else None,
-                    "messages": [dict(msg._mapping) for msg in messages_result],
-                    "llm_calls": [dict(call._mapping) for call in llm_calls_result]
+                    "messages": [dict(msg._mapping) for msg in messages_result]
                 }
                 
         except SQLAlchemyError as e:
@@ -449,12 +295,7 @@ class ChatLogger:
             yield call_tracker
         except Exception as e:
             # Log failed call
-            call_tracker.set_error(str(e))
-            self.log_llm_call(call_tracker.get_llm_call(start_time))
             raise
-        else:
-            # Log successful call
-            self.log_llm_call(call_tracker.get_llm_call(start_time))
 
 
 class LLMCallTracker:

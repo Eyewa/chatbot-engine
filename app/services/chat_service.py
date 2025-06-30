@@ -269,7 +269,8 @@ class ChatService:
             conversation_id = str(uuid.uuid4())
         
         # Start tracking this conversation message
-        message_id = self._chat_logger.start_conversation_message(conversation_id, user_input)
+        user_id = None  # user_id is not in user_input, so always None
+        message_id = self._chat_logger.start_conversation_message(conversation_id, '', user_input)
         
         # Track overall conversation timing
         conversation_start_time = time.time()
@@ -290,45 +291,11 @@ class ChatService:
                 "conversation_id": conversation_id,
                 "message_id": message_id
             }
-            # Optionally add user_id if available in input_dict or context
-            user_id = input_dict.get("user_id") or None
-            if user_id:
-                metadata["user_id"] = user_id
-
             # Track agent invocation
             agent_start_time = time.time()
-            with self._chat_logger.track_llm_call(
-                conversation_id=conversation_id,
-                message_id=message_id,
-                model="gpt-4o",  # The model used by the agent
-                function_name="agent_invoke",
-                input_text=str(input_dict)
-            ) as call_tracker:
-                try:
-                    invoke_sig = inspect.signature(self.agent.invoke)
-                    if 'config' in invoke_sig.parameters:
-                        agent_result = self.agent.invoke(input_dict, config={"metadata": metadata})
-                    else:
-                        agent_result = self.agent.invoke(input_dict)
-                    agent_duration_ms = (time.time() - agent_start_time) * 1000
-                except TypeError:
-                    agent_result = self.agent.invoke(input_dict)
-                agent_duration_ms = (time.time() - agent_start_time) * 1000
-                
-                # Set the output details for tracking
-                # Note: We don't have exact token counts from the agent, so we'll estimate
-                output_text = str(agent_result)
-                estimated_input_tokens = len(str(input_dict).split()) * 1.3  # Rough estimate
-                estimated_output_tokens = len(output_text.split()) * 1.3  # Rough estimate
-                estimated_cost = (estimated_input_tokens * 0.000005) + (estimated_output_tokens * 0.000015)  # GPT-4o pricing
-                
-                call_tracker.set_output(
-                    output_text=output_text,
-                    input_tokens=int(estimated_input_tokens),
-                    output_tokens=int(estimated_output_tokens),
-                    cost_estimate=estimated_cost,
-                    metadata={"agent_duration_ms": agent_duration_ms}
-                )
+            invoke_sig = inspect.signature(self.agent.invoke)
+            agent_result = self.agent.invoke(input_dict)
+            agent_duration_ms = (time.time() - agent_start_time) * 1000
             
             # Process and format the result
             final_response = self.process_agent_result(agent_result)
@@ -344,42 +311,22 @@ class ChatService:
             # Complete conversation message logging
             conversation_duration_ms = (time.time() - conversation_start_time) * 1000
             
-            # Get LLM call summary from the logger
-            conversation_details = self._chat_logger.get_conversation_details(conversation_id)
-            llm_calls = conversation_details.get('llm_calls', [])
-            total_llm_calls = len(llm_calls)
-            total_tokens_used = sum(call.get('total_tokens', 0) for call in llm_calls)
-            total_cost = sum(call.get('cost_estimate', 0.0) for call in llm_calls)
-            
+            # Extract intent and context if available
+            intent = None
+            context = None
+            if isinstance(final_response, dict):
+                intent = final_response.get('type')
+                context = {k: v for k, v in final_response.items() if k not in ('type', 'message')}
+            # Log bot response as a new message
             self._chat_logger.complete_conversation_message(
                 message_id=message_id,
-                final_output=str(final_response),
-                conversation_message=conversation_message,
-                intent=debug_info.get('intent') if debug_info else None,
-                classification=debug_info.get('classification') if debug_info else None,
-                database_used=debug_info.get('database_used') if debug_info else None,
-                sql_queries=sql_queries,
-                sql_results_count=sql_results_count,
-                success=True,
-                debug_info=debug_info
+                conversation_id=conversation_id,
+                user_id='',
+                message_text=str(conversation_message),
+                intent=intent,
+                context=context,
+                sender='bot'
             )
-            
-            # Update conversation message with LLM call summary
-            with self._chat_logger.engine.begin() as conn:
-                conn.execute(text("""
-                    UPDATE chatbot_conversation_messages 
-                    SET total_llm_calls = :total_llm_calls,
-                        total_tokens_used = :total_tokens_used,
-                        total_cost = :total_cost,
-                        total_duration_ms = :total_duration_ms
-                    WHERE message_id = :message_id
-                """), {
-                    "message_id": message_id,
-                    "total_llm_calls": total_llm_calls,
-                    "total_tokens_used": total_tokens_used,
-                    "total_cost": total_cost,
-                    "total_duration_ms": conversation_duration_ms
-                })
             
             logger.info(f"Chat completed with enhanced logging - Conversation: {conversation_id}, Duration: {conversation_duration_ms:.2f}ms")
             
@@ -391,16 +338,16 @@ class ChatService:
             }
             
         except Exception as e:
-            # Log error
-            conversation_duration_ms = (time.time() - conversation_start_time) * 1000
+            # Log error as a bot message
             self._chat_logger.complete_conversation_message(
                 message_id=message_id,
-                final_output=str(e),
-                success=False,
-                error_message=str(e),
-                debug_info={"error": str(e), "traceback": str(e.__traceback__)}
+                conversation_id=conversation_id,
+                user_id='',
+                message_text=str(e),
+                intent=None,
+                context=None,
+                sender='bot'
             )
-            
             logger.error(f"Chat failed with enhanced logging - Conversation: {conversation_id}, Error: {e}", exc_info=True)
             return {
                 "conversation_message": None,
