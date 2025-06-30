@@ -119,6 +119,41 @@ def test_combine_responses_filters_and_merges():
     assert loyalty["card_number"] == "777"
 
 
+def test_combine_responses_with_loyalty_cards():
+    # Test that loyalty card information from loyalty_cards array is properly extracted
+    live = '{"type": "orders_summary", "orders": []}'
+    common = '''
+    {
+        "type": "loyalty_summary",
+        "loyalty_cards": [{
+            "card_number": "000764054",
+            "status": "ACTIVE",
+            "customer_id": "2555880",
+            "metadata": {
+                "loyaltyProgram": "KSALP",
+                "programTier": "KSALP"
+            }
+        }]
+    }
+    '''
+
+    out = agent_router._combine_responses(live, common)
+    result = out
+    assert result is not None
+    assert isinstance(result, list)
+    
+    # Verify loyalty summary is present and has correct data
+    loyalty_summaries = [r for r in result if r.get("type") == "loyalty_summary"]
+    assert len(loyalty_summaries) == 1
+    loyalty = loyalty_summaries[0]
+    
+    # Check that the loyalty card information was properly extracted
+    assert loyalty["card_number"] == "000764054"
+    assert loyalty["status"] == "ACTIVE"
+    assert "points_balance" in loyalty  # Should be present but None
+    assert "expiry_date" in loyalty    # Should be present but None
+
+
 def test_combine_responses_single_agent():
     live = '{"type": "orders_summary", "orders": [{"grand_total": 50}]}'
 

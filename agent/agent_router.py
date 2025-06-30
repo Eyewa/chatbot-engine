@@ -290,6 +290,16 @@ def _combine_responses(resp_live, resp_common, user_query=None):
     def process_response(resp):
         if isinstance(resp, dict) and "type" in resp:
             summary_type = resp["type"]
+            if summary_type == "loyalty_summary" and "loyalty_cards" in resp and resp["loyalty_cards"]:
+                # Extract the first card's details for the summary
+                card = resp["loyalty_cards"][0]
+                return {
+                    "type": "loyalty_summary",
+                    "card_number": card.get("card_number"),
+                    "status": card.get("status"),
+                    "points_balance": None,  # Not available in the raw data
+                    "expiry_date": None  # Not available in the raw data
+                }
             if summary_type in response_types:
                 return build_summary(summary_type, resp, schema, response_types)
         elif isinstance(resp, list):
@@ -363,7 +373,22 @@ def _combine_responses(resp_live, resp_common, user_query=None):
             merge_strategies = {}
         return {"type": merge_strategies.get("default", "text_response"), "message": "No data found from either source"}
 
+    # Ensure loyalty summary is included if it exists in common_data
+    if common_data and isinstance(common_data, dict) and common_data.get("type") == "loyalty_summary":
+        loyalty_exists = any(r.get("type") == "loyalty_summary" for r in combined_responses if isinstance(r, dict))
+        if not loyalty_exists:
+            loyalty_summary = process_response(common_data)
+            if loyalty_summary:
+                combined_responses.append(loyalty_summary)
+
     return combined_responses
+
+
+def extract_loyalty_data(data):
+    if isinstance(data, dict) and data.get("type") == "loyalty_summary":
+        if "loyalty_cards" in data and data["loyalty_cards"]:
+            return data["loyalty_cards"][0]
+    return data
 
 
 # -------------------------
@@ -517,69 +542,47 @@ def run_sql_query(sql: str, db: str = "live") -> list:
 
 def _handle_both(input_dict):
     logging.info(f"[_handle_both] input_dict: {input_dict}")
-    logging.info("🔀 Handling BOTH agent path")
-    input_text = input_dict.get("input", "")
-    history = input_dict.get("chat_history", [])
-
-    # Pre-process for 'last N' or 'recent N'
+    input_text = input_dict["input"]
     limit_n = extract_last_n(input_text)
     logging.info(f"[_handle_both] Extracted limit_n: {limit_n}")
 
-    # Extract focused prompts for each DB
-    live_prompt = extract_focused_prompt(input_text, db="live")
-    common_prompt = extract_focused_prompt(input_text, db="common")
+    # --- Step 1: Extract focused prompts for each agent ---
+    live_prompt = extract_focused_prompt(input_text, "live")
+    common_prompt = extract_focused_prompt(input_text, "common")
     logging.info(f"[_handle_both] Extracted live_prompt: '{live_prompt}'")
     logging.info(f"[_handle_both] Extracted common_prompt: '{common_prompt}'")
 
-    if not live_prompt and not common_prompt:
-        return {"type": "text_response", "message": "Could not determine which data to fetch for either database. Please rephrase your query."}
-    if not live_prompt:
-        return {"type": "text_response", "message": "Could not determine which live (order/customer) data to fetch. Please rephrase your query."}
-    if not common_prompt:
-        return {"type": "text_response", "message": "Could not determine which common (loyalty/wallet/ledger) data to fetch. Please rephrase your query."}
+    # If only one prompt could be extracted, this might not be a 'both' case
+    if not live_prompt or not common_prompt:
+        # Fallback to a single agent if one prompt is missing
+        # (This logic can be refined based on desired behavior)
+        if live_prompt:
+            return live_agent.invoke(input_dict) if live_agent else {"type": "text_response", "message": "Live agent not available."}
+        if common_prompt:
+            return common_agent.invoke(input_dict) if common_agent else {"type": "text_response", "message": "Common agent not available."}
+        # If neither, something is wrong. Let the user know.
+        return {"type": "text_response", "message": "Could not determine how to handle your request."}
 
-    sub_inputs = {
-        "live": {
-            "input": live_prompt,
-            "chat_history": history,
-        },
-        "common": {
-            "input": common_prompt,
-            "chat_history": history,
-        },
-    }
+    # Inject limit into sub-prompts if found
     if limit_n:
-        sub_inputs["live"]["limit"] = limit_n
-        sub_inputs["common"]["limit"] = limit_n
-        # Only inject limit phrase if not already present in the prompt
-        if "last" not in sub_inputs["live"]["input"] and "recent" not in sub_inputs["live"]["input"]:
-            sub_inputs["live"]["input"] = inject_limit_phrase(sub_inputs["live"]["input"], limit_n)
-        if "last" not in sub_inputs["common"]["input"] and "recent" not in sub_inputs["common"]["input"]:
-            sub_inputs["common"]["input"] = inject_limit_phrase(sub_inputs["common"]["input"], limit_n)
-    
+        live_prompt = inject_limit_phrase(live_prompt, limit_n)
+        common_prompt = inject_limit_phrase(common_prompt, limit_n)
+
+    # --- Step 2: Invoke both agents in parallel ---
+    sub_inputs = {
+        "live": {"input": live_prompt, "chat_history": input_dict.get("chat_history", []), "limit": limit_n},
+        "common": {"input": common_prompt, "chat_history": input_dict.get("chat_history", []), "limit": limit_n},
+    }
     logging.info(f"[_handle_both] Final sub_inputs: {sub_inputs}")
-
+    
+    sub_chains = {"live": live_agent, "common": common_agent}
     try:
-        if live_agent is not None:
-            live_resp = live_agent.invoke(sub_inputs["live"])
-        else:
-            live_resp = {"type": "text_response", "message": "Live agent is not available."}
+        live_resp = sub_chains["live"].invoke(sub_inputs["live"])
         logging.info(f"[_handle_both] Live agent response: {live_resp}")
-    except Exception as exc:
-        logging.error("Live agent error: %s", exc)
-        live_resp = None
-    try:
-        if common_agent is not None:
-            common_resp = common_agent.invoke(sub_inputs["common"])
-        else:
-            common_resp = {"type": "text_response", "message": "Common agent is not available."}
+        common_resp = sub_chains["common"].invoke(sub_inputs["common"])
         logging.info(f"[_handle_both] Common agent response: {common_resp}")
-    except Exception as exc:
-        logging.error("Common agent error: %s", exc)
-        common_resp = None
-
-    if not live_resp and not common_resp:
-        logging.error("[_handle_both] Error fetching data from both sources.")
+    except Exception as e:
+        logging.error(f"[_handle_both] Error invoking agent: {e}")
         return {"type": "text_response", "message": "There was an error fetching data from both sources."}
 
     combined = _combine_responses(live_resp, common_resp, input_text)
