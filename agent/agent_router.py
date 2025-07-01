@@ -264,6 +264,59 @@ def deep_clean_json_blocks(obj):
         return obj
 
 
+def apply_business_rules(combined_responses, user_query, response_types, schema):
+    import yaml
+    import os
+    # Load business rules from config
+    try:
+        with open(os.path.join("config", "query_routing.yaml"), "r", encoding="utf-8") as f:
+            routing_config = yaml.safe_load(f)
+            rules = routing_config.get("business_rules", {}).get("always_include_summary", [])
+    except Exception as e:
+        rules = []
+
+    for rule in rules:
+        rule_type = rule.get("type")
+        condition = rule.get("condition")
+        if condition == "customer_id_in_query":
+            import re
+            match = re.search(r"customer\s*(\d+)", user_query, re.IGNORECASE)
+            customer_id = match.group(1) if match else None
+            already_present = any(r.get("type") == rule_type for r in combined_responses if isinstance(r, dict))
+            if customer_id and not already_present:
+                # Fetch customer info from DB (config-driven fields)
+                customer_fields = response_types.get(rule_type, {}).get("fields", [])
+                if customer_fields:
+                    # Find the customer table from schema (config-driven)
+                    customer_table = None
+                    live_tables = schema.get('live', {}).get('tables', {})
+                    for table_name, table_info in live_tables.items():
+                        if 'customer' in table_name.lower() and 'entity' in table_name.lower():
+                            customer_table = table_name
+                            break
+                    if not customer_table:
+                        import logging
+                        logging.warning("Could not find customer table in schema")
+                        continue
+                    select_fields = []
+                    for f in customer_fields:
+                        if "field_mappings" in schema and f in schema["field_mappings"]:
+                            mapping = schema["field_mappings"][f]
+                            select_fields.extend(mapping.get("source_fields", []))
+                        else:
+                            select_fields.append(f)
+                    select_fields = list(set(select_fields))
+                    sql = f"SELECT {', '.join(select_fields)} FROM {customer_table} WHERE entity_id = {customer_id}"
+                    from agent.agent_router import run_sql_query, build_summary
+                    rows = run_sql_query(sql, db="live")
+                    if rows:
+                        customer_data = rows[0]
+                        summary = build_summary(rule_type, customer_data, schema, response_types)
+                        summary["customer_id"] = str(customer_id)
+                        combined_responses.append(summary)
+    return combined_responses
+
+
 def _combine_responses(resp_live, resp_common, user_query=None):
     response_types = load_response_types()
     schema = load_schema()
@@ -313,44 +366,9 @@ def _combine_responses(resp_live, resp_common, user_query=None):
         else:
             combined_responses.append(common_summary)
 
-    # --- Always include customer_summary if customer_id is present in the query ---
+    # Apply business rules from config
     if user_query is not None:
-        import re
-        match = re.search(r"customer\s*(\d+)", user_query, re.IGNORECASE)
-        customer_id = match.group(1) if match else None
-        already_present = any(r.get("type") == "customer_summary" for r in combined_responses if isinstance(r, dict))
-        if customer_id and not already_present:
-            # Fetch customer info from DB (config-driven fields)
-            customer_fields = response_types.get("customer_summary", {}).get("fields", [])
-            if customer_fields:
-                # Find the customer table from schema (config-driven)
-                customer_table = None
-                live_tables = schema.get('live', {}).get('tables', {})
-                for table_name, table_info in live_tables.items():
-                    if 'customer' in table_name.lower() and 'entity' in table_name.lower():
-                        customer_table = table_name
-                        break
-                
-                if not customer_table:
-                    logging.warning("Could not find customer table in schema")
-                    return combined_responses
-                
-                select_fields = []
-                for f in customer_fields:
-                    if "field_mappings" in schema and f in schema["field_mappings"]:
-                        mapping = schema["field_mappings"][f]
-                        select_fields.extend(mapping.get("source_fields", []))
-                    else:
-                        select_fields.append(f)
-                select_fields = list(set(select_fields))
-                sql = f"SELECT {', '.join(select_fields)} FROM {customer_table} WHERE entity_id = {customer_id}"
-                rows = run_sql_query(sql, db="live")
-                if rows:
-                    customer_data = rows[0]
-                    summary = build_summary("customer_summary", customer_data, schema, response_types)
-                    # Add customer_id to summary for clarity
-                    summary["customer_id"] = str(customer_id)
-                    combined_responses.append(summary)
+        combined_responses = apply_business_rules(combined_responses, user_query, response_types, schema)
 
     if not combined_responses:
         # Fallback: no data from either source

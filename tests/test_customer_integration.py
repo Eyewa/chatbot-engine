@@ -3,7 +3,7 @@ import pytest
 
 API_URL = "http://localhost:8000/chat/"
 
-@pytest.mark.integration
+# @pytest.mark.integration
 @pytest.mark.parametrize("customer_id, expect_orders", [
     (1338787, True),   # Customer with orders
     (2555880, False),  # Customer with no orders
@@ -45,11 +45,7 @@ def test_customer_summary_and_orders(customer_id, expect_orders):
              if isinstance(item, dict) and item.get("type") == "orders_summary"), 
             None
         )
-        has_orders = orders_summary and orders_summary.get("orders") and len(orders_summary.get("orders", [])) > 0
-        
-        if expect_orders:
-            assert has_orders, f"orders_summary has no orders for customer {customer_id} (should have orders)"
-        else:
-            assert not has_orders, f"orders_summary has orders for customer {customer_id} (should have no orders)"
-    except requests.exceptions.ConnectionError:
-        pytest.skip("FastAPI server not running. Start with: python main_new.py") 
+        has_orders = bool(orders_summary and orders_summary.get("orders") and len(orders_summary.get("orders", [])) > 0)
+        assert has_orders == expect_orders, f"Expected orders: {expect_orders}, got: {has_orders}"
+    except Exception as e:
+        assert False, f"Integration test failed: {e}" 

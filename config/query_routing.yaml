@@ -102,4 +102,10 @@ response_combination:
     orders_only: "orders_summary"
     loyalty_only: "loyalty_summary"
     customer_only: "customer_summary"
-    default: "text_response" 
+    default: "text_response"
+
+business_rules:
+  always_include_summary:
+    - type: customer_summary
+      condition: customer_id_in_query
+ 
