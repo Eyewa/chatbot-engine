@@ -128,7 +128,7 @@ def create_app() -> FastAPI:
         if request.url.path == "/chat" and request.method == "POST":
             try:
                 request_body = await request.json()
-                conversation_id = request_body.get("conversation_id", "unknown")
+                conversation_id = request_body.get("conversationId", "unknown")
             except Exception:
                 conversation_id = request.headers.get("X-Conversation-Id", "unknown")
         else:
