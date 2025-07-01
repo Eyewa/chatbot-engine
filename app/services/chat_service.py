@@ -301,7 +301,7 @@ class ChatService:
             final_response = self.process_agent_result(agent_result)
             
             # Generate conversation message
-            conversation_message = await self._generate_conversation_message(user_input, final_response)
+            conversation_message = await self._generate_conversation_message(user_input, final_response, conversation_id, message_id)
             
             # Extract debug info and SQL queries
             debug_info = self._extract_debug_info(agent_result)
@@ -356,7 +356,7 @@ class ChatService:
                 "message_id": message_id
             }
 
-    async def _generate_conversation_message(self, user_input, final_response):
+    async def _generate_conversation_message(self, user_input, final_response, conversation_id=None, message_id=None):
         """
         Use the LLM to generate a human-readable message summarizing the output.
         """
@@ -370,7 +370,13 @@ class ChatService:
                 "\nStructured output: " + str(final_response) +
                 "\nMessage:"
             )
-            response = self.llm.invoke(prompt)
+            # Ensure metadata is defined
+            import os
+            metadata = {
+                "conversation_id": conversation_id or os.environ.get("CONVERSATION_ID", "test-conv-id"),
+                "message_id": message_id or os.environ.get("MESSAGE_ID", "test-msg-id")
+            }
+            response = self.llm.invoke(prompt, metadata=metadata)
             # Extract only the content from the LLM response, excluding metadata
             if hasattr(response, 'content'):
                 return response.content

@@ -139,6 +139,11 @@ def classify(query: str) -> Dict[str, Any]:
             messages=messages,  # type: ignore
             response_format={"type": "json_object"},
             temperature=0,
+            # Add metadata for LangSmith traceability
+            metadata={
+                "conversation_id": os.environ.get("CONVERSATION_ID", "test-conv-id"),
+                "message_id": os.environ.get("MESSAGE_ID", "test-msg-id")
+            }
         )
         llm_output = response.choices[0].message.content
         logging.debug(f"[Classifier] Raw LLM Output: {llm_output}")

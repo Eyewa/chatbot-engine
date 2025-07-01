@@ -1,4 +1,5 @@
 import yaml
+import os
 
 def safe_load(file_path):
     if isinstance(file_path, str):
@@ -10,7 +11,6 @@ def safe_load(file_path):
 
 def filter_response_by_type(response_json: dict) -> dict:
     # Import RESPONSE_TYPES locally to avoid circular import
-    import os
     RESPONSE_TYPES = None
     if os.path.exists(os.path.join("config", "templates", "response_types.yaml")):
         with open(os.path.join("config", "templates", "response_types.yaml")) as f:
@@ -71,7 +71,10 @@ def generate_llm_message(output, llm, schema=None, response_type=None):
         resp = llm.invoke([
             {"role": "system", "content": "You are a helpful assistant."},
             {"role": "user", "content": prompt}
-        ])
+        ], metadata={
+            "conversation_id": os.environ.get("CONVERSATION_ID", "test-conv-id"),
+            "message_id": os.environ.get("MESSAGE_ID", "test-msg-id")
+        })
         # Token tracking
         try:
             from token_tracker import track_llm_call
