@@ -135,7 +135,7 @@ def create_app() -> FastAPI:
             conversation_id = request.headers.get("X-Conversation-Id", "unknown")
         with trace(
             "api-request",
-            project_name=os.environ.get("LANGCHAIN_PROJECT", "chatbot-engine"),
+            project_name=os.environ.get("LANGSMITH_PROJECT", "chatbot-engine"),
             metadata={"conversation_id": conversation_id}
         ):
             if conversation_id == "unknown":
