@@ -65,10 +65,22 @@ field_extraction:
     status: ["status"]
     created_at: ["created_at", "date"]
   loyalty_summary:
-    card_number: ["card_number", "card"]
-    status: ["status"]
-    points_balance: ["points", "balance"]
-    expiry_date: ["expiry", "expiry_date"]
+    card_number:
+      - path: "loyalty_cards.0.card_number"
+      - "card_number"
+      - "card"
+    status:
+      - path: "loyalty_cards.0.status"
+      - "status"
+    points_balance:
+      - path: "loyalty_cards.0.points_balance"
+      - "points_balance"
+      - "points"
+      - "balance"
+    expiry_date:
+      - path: "loyalty_cards.0.expiry_date"
+      - "expiry_date"
+      - "expiry"
   wallet_summary:
     customer_balance: ["balance", "customer_balance"]
     cashback_balance: ["cashback"]

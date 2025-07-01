@@ -290,16 +290,6 @@ def _combine_responses(resp_live, resp_common, user_query=None):
     def process_response(resp):
         if isinstance(resp, dict) and "type" in resp:
             summary_type = resp["type"]
-            if summary_type == "loyalty_summary" and "loyalty_cards" in resp and resp["loyalty_cards"]:
-                # Extract the first card's details for the summary
-                card = resp["loyalty_cards"][0]
-                return {
-                    "type": "loyalty_summary",
-                    "card_number": card.get("card_number"),
-                    "status": card.get("status"),
-                    "points_balance": None,  # Not available in the raw data
-                    "expiry_date": None  # Not available in the raw data
-                }
             if summary_type in response_types:
                 return build_summary(summary_type, resp, schema, response_types)
         elif isinstance(resp, list):
@@ -373,27 +363,7 @@ def _combine_responses(resp_live, resp_common, user_query=None):
             merge_strategies = {}
         return {"type": merge_strategies.get("default", "text_response"), "message": "No data found from either source"}
 
-    # Ensure loyalty summary is included if it exists in common_data
-    if common_data and isinstance(common_data, dict) and common_data.get("type") == "loyalty_summary":
-        loyalty_exists = any(r.get("type") == "loyalty_summary" for r in combined_responses if isinstance(r, dict))
-        if not loyalty_exists:
-            loyalty_summary = process_response(common_data)
-            if loyalty_summary:
-                combined_responses.append(loyalty_summary)
-
     return combined_responses
-
-
-def extract_loyalty_data(data):
-    if isinstance(data, dict) and data.get("type") == "loyalty_summary":
-        if "loyalty_cards" in data and data["loyalty_cards"]:
-            return data["loyalty_cards"][0]
-    return data
-
-
-# -------------------------
-# ADVANCED BOTH HANDLER
-# -------------------------
 
 
 def is_structured_response(resp, expected_types=None):
@@ -699,12 +669,67 @@ def build_summary(summary_type, data, schema, response_types):
     summary_config = response_types.get(summary_type, {})
     fields = summary_config.get("fields", [])
     summary = {"type": summary_type}
+
+    # Load field_extraction config
+    import yaml
+    import os
+    field_extraction = {}
+    try:
+        with open(os.path.join("config", "query_routing.yaml"), "r", encoding="utf-8") as f:
+            routing_config = yaml.safe_load(f)
+            field_extraction = routing_config.get("field_extraction", {})
+    except Exception as e:
+        field_extraction = {}
+
+    extraction_cfg = field_extraction.get(summary_type, {})
+
+    def extract_by_path(data, path):
+        """Extract value from nested dict/list using dot notation path (e.g., 'loyalty_cards.0.card_number')."""
+        parts = path.split('.')
+        val = data
+        for part in parts:
+            if isinstance(val, list):
+                try:
+                    idx = int(part)
+                    val = val[idx]
+                except (ValueError, IndexError, TypeError):
+                    return None
+            elif isinstance(val, dict):
+                val = val.get(part)
+            else:
+                return None
+        return val
+
     for field in fields:
+        field_cfg = extraction_cfg.get(field)
+        value = None
+        strategies = []
+        # If config provides a list, use it as strategies; if dict, wrap in list; else fallback
+        if isinstance(field_cfg, list):
+            strategies = field_cfg
+        elif isinstance(field_cfg, dict):
+            strategies = [field_cfg]
+        elif field_cfg is not None:
+            strategies = [field_cfg]
+        # Always try schema field_mappings as a strategy
         if "field_mappings" in schema and field in schema["field_mappings"]:
             mapping = schema["field_mappings"][field]
-            summary[field] = apply_field_mapping(mapping, data)
-        else:
-            summary[field] = data.get(field)
+            mapped_value = apply_field_mapping(mapping, data)
+            if mapped_value is not None:
+                value = mapped_value
+        # Try each strategy in order
+        if value is None:
+            for strat in strategies:
+                if isinstance(strat, dict) and "path" in strat:
+                    value = extract_by_path(data, strat["path"])
+                elif isinstance(strat, str):
+                    value = data.get(strat)
+                if value is not None:
+                    break
+        # Fallback: try the field name itself
+        if value is None:
+            value = data.get(field)
+        summary[field] = value
     return summary
 
 def apply_field_mapping(mapping, data):
