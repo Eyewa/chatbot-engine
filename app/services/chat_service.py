@@ -363,42 +363,32 @@ class ChatService:
         try:
             # Compose a prompt for the LLM
             prompt = (
-                "Given the following user request and structured data output, "
-                "write a short, friendly, human-readable summary message for the user. "
-                "Do not repeat the user's question verbatim."
+                "Given the user request and structured data output below, "
+                "write a short, friendly summary for the user. "
+                "Do not repeat the user's question."
                 "\nUser request: " + str(user_input) +
                 "\nStructured output: " + str(final_response) +
                 "\nMessage:"
             )
             response = self.llm.invoke(prompt)
-            
             # Extract only the content from the LLM response, excluding metadata
             if hasattr(response, 'content'):
-                # LangChain AIMessage or similar
                 return response.content
             elif isinstance(response, dict):
-                # Dictionary response
                 return response.get("message") or response.get("content") or str(response)
             elif isinstance(response, str):
-                # String response
                 return response
             else:
-                # Fallback: try to get string representation but clean it
                 response_str = str(response)
-                # Remove common metadata patterns
                 if "response_metadata" in response_str:
-                    # Try to extract just the content part
                     import re
-                    # Look for content field in the response
                     content_match = re.search(r"'content':\s*'([^']*)'", response_str)
                     if content_match:
                         return content_match.group(1)
-                    # If no content field, try to get the first part before metadata
                     parts = response_str.split("response_metadata")
                     if parts:
                         return parts[0].strip()
                 return response_str
-                
         except Exception as e:
             logger.warning(f"Failed to generate conversation message: {e}")
-            return None 
+            return "Sorry, I couldn't generate a summary." 

@@ -51,19 +51,13 @@ class PromptBuilder:
     ) -> str:
         types = ", ".join(self.response_cfg.keys())
         lines = [
-            "You are Winkly, a structured data assistant for customer and order data. Use only the schema and rules below.",
-            "Rules:",
-            "- Use only the tables and fields listed below. Never invent or guess columns, tables, or values.",
-            "- If the user requests a field or table not listed below, respond with an error message indicating the field/table does not exist.",
-            "- For order history, use sales_order.increment_id as the order ID. Only use customer_loyalty_ledger.order_id for loyalty transactions, and join to sales_order.increment_id if order details are needed.",
-            "- If only loyalty card details are needed, do not join the ledger table.",
-            "- Never join across _live and _common databases.",
-            "- Do NOT hallucinate tables, fields, or values. Only use what is listed.",
-            "- The only valid database names are 'eyewa_live' and 'eyewa_common'. Never use 'magento_live' or any other database name.",
-            "- Always return valid JSON with double quotes. No code blocks, no SQL, no prose.",
-            "- Output must match one of the allowed response_types. Top-level key must be 'type'.",
-            f"- Valid types: {types}.",
-            "- Customer information (name, email, etc.) must always be fetched from the customer_entity table, not from sales_order.",
+            "You are a structured data assistant. Use only the schema and rules below.",
+            "Instructions:",
+            "- Use only the listed tables and fields. Do not invent or guess.",
+            "- If a requested field/table is missing, return an error message.",
+            "- Only use allowed joins.",
+            "- Output only valid JSON (no text, no markdown, no SQL, no prose).",
+            f"- Top-level key must be 'type', matching one of: {types}.",
         ]
         if allowed_tables:
             lines.append(f"Database: `{db}`. Allowed tables: {', '.join(allowed_tables)}.")
@@ -72,15 +66,12 @@ class PromptBuilder:
             db_tables = self.schema_cfg.get(schema_db_key, {}).get("tables", {})
             for table in allowed_tables:
                 meta = db_tables.get(table, {})
-                # Short field list
                 fields = meta.get("fields", [])
                 field_list = ", ".join(fields)
                 table_line = f"- `{table}`: [{field_list}]"
-                # Concise business context (table-level)
                 business_ctx = meta.get("businessContext")
                 desc = meta.get("description")
                 custom = meta.get("customInfo")
-                # Prefer businessContext, then customInfo, then short description
                 if business_ctx:
                     ctx_lines = [l.strip() for l in business_ctx.splitlines() if l.strip()]
                     table_line += "\n  " + "\n  ".join(ctx_lines)
@@ -88,7 +79,6 @@ class PromptBuilder:
                     table_line += f"\n  (Note: {custom})"
                 elif desc and len(desc) <= 80:
                     table_line += f"\n  {desc}"
-                # Column-level business context (only for special fields)
                 field_meta = meta.get("field_meta", {})
                 for field in fields:
                     col_ctx = None
@@ -100,7 +90,6 @@ class PromptBuilder:
             if table_info:
                 lines.append("ALLOWED TABLES AND FIELDS:")
                 lines.extend(table_info)
-            # Add a field-to-table mapping for clarity
             field_to_table = {}
             for table in allowed_tables:
                 meta = db_tables.get(table, {})
@@ -110,7 +99,6 @@ class PromptBuilder:
                 lines.append("FIELD TO TABLE MAPPING:")
                 for field, tables in sorted(field_to_table.items()):
                     lines.append(f"- {field}: {', '.join(tables)}")
-        # Add a single, clear join example if available
         if extra_examples and len(extra_examples) > 0:
             lines.append("Example join:")
             lines.append(extra_examples[0])
@@ -226,15 +214,14 @@ class PromptBuilder:
     ) -> str:
         mini_schema = self.build_mini_schema(relevant_tables)
         lines = [
-            "You are Winkly, a structured data assistant for customer and order data. Use only the schema and rules below.",
-            "Rules:",
-            "- Use only the tables and fields listed below. Never invent or guess columns, tables, or values.",
-            "- If the user requests a field or table not listed below, respond with an error message indicating the field/table does not exist.",
-            "- Only use joins that are listed below.",
-            "- The only valid database names are 'eyewa_live' and 'eyewa_common'. Never use 'magento_live' or any other database name.",
-            "- Always output a JSON object with: tables, fields, joins, filters, limit, order_by. Do NOT output SQL.",
+            "You are a structured data assistant. Use only the schema and rules below.",
+            "Instructions:",
+            "- Use only the listed tables and fields. Do not invent or guess.",
+            "- If a requested field/table is missing, return an error message.",
+            "- Only use allowed joins.",
+            "- Output only valid JSON (no text, no markdown, no SQL, no prose).",
+            "- Output must be a JSON object with: tables, fields, joins, filters, limit, order_by. Do NOT output SQL.",
         ]
-        # Add mini-schema
         for table, meta in mini_schema["tables"].items():
             lines.append(f"- {table}: [ALLOWED FIELDS: {', '.join(meta['fields'])}]")
         join_lines = []

@@ -56,19 +56,16 @@ import logging
 
 def generate_llm_message(output, llm, schema=None, response_type=None):
     prompt = (
-        "Given the following data, generate a structured JSON response."
+        "Given the following data, output valid JSON."
     )
     if schema and response_type and response_type in schema:
         allowed_fields = schema[response_type]['fields']
         prompt += f" The response must match this schema: {json.dumps(allowed_fields, indent=2)}. "
-        
-        # Use config-driven instructions from schema
         if 'instructions' in schema[response_type]:
             prompt += schema[response_type]['instructions'] + " "
-    
     prompt += (
         "\nDATA:\n" + json.dumps(output, indent=2) +
-        "\nOutput only a valid JSON object, with no explanation or code block formatting."
+        "\nOutput only valid JSON. No text, no markdown."
     )
     try:
         resp = llm.invoke([
@@ -78,13 +75,8 @@ def generate_llm_message(output, llm, schema=None, response_type=None):
         # Token tracking
         try:
             from token_tracker import track_llm_call
-            track_llm_call(
-                call_type="response_formatting",
-                function_name="generate_llm_message",
-                prompt=prompt,
-                response=str(resp),
-                model="gpt-4o"
-            )
+            message = str(resp.content) if hasattr(resp, "content") else str(resp)
+            track_llm_call(prompt, message)
         except Exception as e:
             logging.warning(f"[TokenTracker] Could not track tokens: {e}")
         message = str(resp.content) if hasattr(resp, "content") else str(resp)

@@ -96,16 +96,14 @@ def _rule_based(query: str) -> Dict[str, List[str]]:
 
 
 prompt_template = """
-You are an expert at understanding user queries and extracting the necessary information to build a SQL query.
-Your goal is to identify the main table, all the fields the user is asking for, and any filters to apply.
+You are an expert at extracting structured query info from user requests.
 
-**Instructions:**
-1.  Identify the main subject of the query to determine the `main_table`.
-2.  List ALL fields the user is asking for. Be comprehensive. For example, if they ask for "customer name", you MUST include "customer_name" in the fields list. If they ask for "order amount", include "order_amount".
-3.  Extract any filters the user has specified. For example, "for customer 123" should become `{{"customer_id": 123}}`.
-4.  If the user specifies a number of records, extract it as the `limit`. For example, "last 5 orders" means a `limit` of 5. If not specified, default to 10.
-
-Now, provide the JSON output for the user query above.
+Instructions:
+- Identify the main table (`main_table`).
+- List all requested fields (`fields`).
+- Extract filters (e.g., {"customer_id": 123}).
+- Extract record limit (`limit`, default 10).
+- Output only valid JSON.
 """
 
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"), max_retries=3)
@@ -149,13 +147,7 @@ def classify(query: str) -> Dict[str, Any]:
         # Token tracking
         try:
             from token_tracker import track_llm_call
-            track_llm_call(
-                call_type="classification",
-                function_name="classify",
-                prompt=json.dumps(messages),
-                response=llm_output,
-                model="gpt-4o"
-            )
+            track_llm_call(json.dumps(messages), llm_output)
         except Exception as e:
             logging.warning(f"[TokenTracker] Could not track tokens: {e}")
         return json.loads(llm_output)
