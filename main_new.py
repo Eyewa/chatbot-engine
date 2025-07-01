@@ -125,7 +125,7 @@ def create_app() -> FastAPI:
     @app.middleware("http")
     async def langsmith_tracing_middleware(request: Request, call_next):
         conversation_id = "unknown"
-        if request.url.path == "/chat" and request.method == "POST":
+        if request.url.path == "/chat/" and request.method == "POST":
             try:
                 request_body = await request.json()
                 conversation_id = request_body.get("conversationId", "unknown")
