@@ -134,16 +134,18 @@ def classify(query: str) -> Dict[str, Any]:
     logging.debug(f"[Classifier] Messages sent to LLM: {json.dumps(messages, indent=2)}")
 
     try:
+        metadata = {
+            "conversation_id": os.environ.get("CONVERSATION_ID", "test-conv-id"),
+            "message_id": os.environ.get("MESSAGE_ID", "test-msg-id")
+        }
+        logging.info(f"Invoking LLM with metadata: {metadata}")
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=messages,  # type: ignore
             response_format={"type": "json_object"},
             temperature=0,
             # Add metadata for LangSmith traceability
-            metadata={
-                "conversation_id": os.environ.get("CONVERSATION_ID", "test-conv-id"),
-                "message_id": os.environ.get("MESSAGE_ID", "test-msg-id")
-            }
+            metadata=metadata
         )
         llm_output = response.choices[0].message.content
         logging.debug(f"[Classifier] Raw LLM Output: {llm_output}")

@@ -68,13 +68,15 @@ def generate_llm_message(output, llm, schema=None, response_type=None):
         "\nOutput only valid JSON. No text, no markdown."
     )
     try:
+        metadata = {
+            "conversation_id": os.environ.get("CONVERSATION_ID", "test-conv-id"),
+            "message_id": os.environ.get("MESSAGE_ID", "test-msg-id")
+        }
+        logging.info(f"Invoking LLM with metadata: {metadata}")
         resp = llm.invoke([
             {"role": "system", "content": "You are a helpful assistant."},
             {"role": "user", "content": prompt}
-        ], metadata={
-            "conversation_id": os.environ.get("CONVERSATION_ID", "test-conv-id"),
-            "message_id": os.environ.get("MESSAGE_ID", "test-msg-id")
-        })
+        ], metadata=metadata)
         # Token tracking
         try:
             from token_tracker import track_llm_call

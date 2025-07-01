@@ -291,6 +291,7 @@ class ChatService:
                 "conversation_id": conversation_id,
                 "message_id": message_id
             }
+            logger.info(f"Invoking LLM with metadata: {metadata}")
             # Track agent invocation
             agent_start_time = time.time()
             invoke_sig = inspect.signature(self.agent.invoke)
@@ -376,7 +377,8 @@ class ChatService:
                 "conversation_id": conversation_id or os.environ.get("CONVERSATION_ID", "test-conv-id"),
                 "message_id": message_id or os.environ.get("MESSAGE_ID", "test-msg-id")
             }
-            response = self.llm.invoke(prompt, metadata=metadata)
+            logger.info(f"Invoking LLM with metadata: {metadata}")
+            response = self.llm.invoke(prompt)
             # Extract only the content from the LLM response, excluding metadata
             if hasattr(response, 'content'):
                 return response.content

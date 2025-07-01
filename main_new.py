@@ -9,8 +9,9 @@ import sys
 from contextlib import asynccontextmanager
 import os
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from langsmith import trace
 
 from app.core.config import get_settings
 from app.core.logging import setup_logging, get_logger
@@ -119,6 +120,28 @@ def create_app() -> FastAPI:
         logger.info("✅ Configuration reload router included")
     except ImportError as e:
         logger.warning(f"⚠️ Could not include reload router: {e}")
+    
+    # Add LangSmith tracing middleware
+    @app.middleware("http")
+    async def langsmith_tracing_middleware(request: Request, call_next):
+        conversation_id = "unknown"
+        if request.url.path == "/chat" and request.method == "POST":
+            try:
+                request_body = await request.json()
+                conversation_id = request_body.get("conversation_id", "unknown")
+            except Exception:
+                conversation_id = request.headers.get("X-Conversation-Id", "unknown")
+        else:
+            conversation_id = request.headers.get("X-Conversation-Id", "unknown")
+        with trace(
+            "api-request",
+            project_name=os.environ.get("LANGCHAIN_PROJECT", "chatbot-engine"),
+            metadata={"conversation_id": conversation_id}
+        ):
+            if conversation_id == "unknown":
+                logger.warning("[LangSmith] conversation_id not passed in request body or header; using 'unknown'.")
+            response = await call_next(request)
+        return response
     
     return app
 
