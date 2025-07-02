@@ -1,6 +1,6 @@
 import json
 
-import agent.agent_router as agent_router
+import agent.core.agent_router as agent_router
 
 
 class DummyChain:

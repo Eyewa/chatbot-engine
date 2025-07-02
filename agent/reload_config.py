@@ -3,7 +3,7 @@ import os
 import logging
 from typing import Dict, List, Optional, Any
 from fastapi import APIRouter
-from agent.prompt_builder import PromptBuilder
+from agent.core.prompt_builder import PromptBuilder
 from langchain_community.utilities.sql_database import SQLDatabase
 from langchain_community.agent_toolkits.sql.toolkit import SQLDatabaseToolkit
 from langchain_openai import ChatOpenAI

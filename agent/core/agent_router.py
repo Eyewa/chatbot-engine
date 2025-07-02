@@ -43,10 +43,10 @@ except Exception:
 
 
 from tools.sql_toolkit_factory import get_live_sql_tools, get_common_sql_tools
-from agent.prompt_builder import PromptBuilder
-from agent.config_loader import config_loader
-from agent.utils import filter_response_by_type, extract_last_n, generate_llm_message
-from agent.dynamic_sql_builder import load_schema, build_dynamic_sql, get_field_alias
+from agent.core.prompt_builder import PromptBuilder
+from agent.core.config_loader import config_loader
+from agent.core.utils import filter_response_by_type, extract_last_n, generate_llm_message
+from agent.core.dynamic_sql_builder import load_schema, build_dynamic_sql, get_field_alias
 
 # Global agent instances
 live_agent = None
@@ -130,7 +130,7 @@ def _build_agent(
             return {"type": "text_response", "message": "LangChain not available"}
         return dummy_agent
 
-    from agent.prompt_builder import PromptBuilder
+    from agent.core.prompt_builder import PromptBuilder
     from langchain.agents import create_openai_functions_agent
     from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
@@ -307,7 +307,6 @@ def apply_business_rules(combined_responses, user_query, response_types, schema)
                             select_fields.append(f)
                     select_fields = list(set(select_fields))
                     sql = f"SELECT {', '.join(select_fields)} FROM {customer_table} WHERE entity_id = {customer_id}"
-                    from agent.agent_router import run_sql_query, build_summary
                     rows = run_sql_query(sql, db="live")
                     if rows:
                         customer_data = rows[0]

@@ -18,7 +18,7 @@ except Exception:
     Runnable = None  # type: ignore
 
 # Load the schema to provide context to the LLM
-from agent.dynamic_sql_builder import load_schema
+from agent.core.dynamic_sql_builder import load_schema
 
 
 INTENT_HIERARCHY: Dict[str, List[str]] = {

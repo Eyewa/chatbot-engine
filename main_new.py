@@ -17,6 +17,7 @@ from app.core.config import get_settings
 from app.core.logging import setup_logging, get_logger
 from app.api.middleware.error_handler import register_exception_handlers
 from app.api.routes import chat_router, admin_router
+from agent.reload_config import router as reload_router
 
 # LangSmith integration: set environment variables if not already set
 if not os.environ.get("LANGCHAIN_API_KEY"):
@@ -79,17 +80,8 @@ def create_app() -> FastAPI:
     app.include_router(chat_router)
     app.include_router(admin_router)
     
-    # Include logging dashboard router
-    try:
-        from app.api.routes.logging_dashboard import router as logging_dashboard_router
-        app.include_router(logging_dashboard_router)
-        logger.info("✅ Logging dashboard router included")
-    except ImportError as e:
-        logger.warning(f"⚠️ Could not include logging dashboard router: {e}")
-    
     # Include existing reload router
     try:
-        from agent.reload_config import router as reload_router
         app.include_router(reload_router)
         logger.info("✅ Configuration reload router included")
     except ImportError as e:

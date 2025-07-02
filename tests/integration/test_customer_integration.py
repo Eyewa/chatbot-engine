@@ -3,7 +3,7 @@ import pytest
 
 API_URL = "http://localhost:8000/chat/"
 
-# @pytest.mark.integration
+@pytest.mark.integration
 @pytest.mark.parametrize("customer_id, expect_orders", [
     (1338787, True),   # Customer with orders
     (2555880, False),  # Customer with no orders

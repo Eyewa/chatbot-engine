@@ -16,8 +16,8 @@ from langchain_openai import ChatOpenAI
 from sqlalchemy import text
 
 from agent.agent import build_chatbot_agent
-from agent.chat_logger import get_chat_logger
-from agent.utils import generate_llm_message
+from app.services.chat_logger import get_chat_logger
+from agent.core.utils import generate_llm_message
 from ..core.config import get_settings
 from ..utils.response_formatter import (
     enforce_response_schema,
@@ -266,9 +266,9 @@ class ChatService:
         if not conversation_id:
             conversation_id = str(uuid.uuid4())
         
-        # Start tracking this conversation message
+        # Start tracking this conversation message (user)
         user_id = None  # user_id is not in user_input, so always None
-        message_id = self._chat_logger.start_conversation_message(conversation_id, '', user_input)
+        user_message_id = self._chat_logger.start_conversation_message(conversation_id, '', user_input)
         
         # Track overall conversation timing
         conversation_start_time = time.time()
@@ -287,7 +287,7 @@ class ChatService:
             # Prepare metadata for LangSmith
             metadata = {
                 "conversation_id": conversation_id,
-                "message_id": message_id
+                "message_id": user_message_id
             }
             logger.info(f"Invoking LLM with metadata: {metadata}")
             # Track agent invocation
@@ -300,7 +300,7 @@ class ChatService:
             final_response = self.process_agent_result(agent_result)
             
             # Generate conversation message
-            conversation_message = await self._generate_conversation_message(user_input, final_response, conversation_id, message_id)
+            conversation_message = await self._generate_conversation_message(user_input, final_response, conversation_id, user_message_id)
             
             # Extract debug info and SQL queries
             debug_info = self._extract_debug_info(agent_result)
@@ -316,9 +316,10 @@ class ChatService:
             if isinstance(final_response, dict):
                 intent = final_response.get('type')
                 context = {k: v for k, v in final_response.items() if k not in ('type', 'message')}
-            # Log bot response as a new message
+            # Log bot response as a new message with a new message_id
+            bot_message_id = str(uuid.uuid4())
             self._chat_logger.complete_conversation_message(
-                message_id=message_id,
+                message_id=bot_message_id,
                 conversation_id=conversation_id,
                 user_id='',
                 message_text=str(conversation_message),
@@ -333,13 +334,14 @@ class ChatService:
                 "conversation_message": conversation_message,
                 "output": final_response,
                 "conversation_id": conversation_id,
-                "message_id": message_id
+                "message_id": bot_message_id
             }
             
         except Exception as e:
-            # Log error as a bot message
+            # Log error as a bot message with a new message_id
+            bot_message_id = str(uuid.uuid4())
             self._chat_logger.complete_conversation_message(
-                message_id=message_id,
+                message_id=bot_message_id,
                 conversation_id=conversation_id,
                 user_id='',
                 message_text=str(e),
@@ -352,7 +354,7 @@ class ChatService:
                 "conversation_message": None,
                 "output": str(e),
                 "conversation_id": conversation_id,
-                "message_id": message_id
+                "message_id": bot_message_id
             }
 
     async def _generate_conversation_message(self, user_input, final_response, conversation_id=None, message_id=None):

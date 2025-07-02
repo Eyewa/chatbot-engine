@@ -1,6 +1,6 @@
 import logging
 from typing import Dict, Any, List
-from agent.config_loader import config_loader
+from agent.core.config_loader import config_loader
 
 def validate_intent_schema(intent: Dict[str, Any], schema: Dict[str, Any]) -> List[str]:
     logging.debug(f"[validate_intent_schema] Validating intent: {intent}")

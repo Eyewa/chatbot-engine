@@ -1,5 +1,5 @@
 import pytest
-from agent.schema_validator import validate_schema_yaml
+from agent.core.schema_validator import validate_schema_yaml
 
 @pytest.fixture
 def schema():

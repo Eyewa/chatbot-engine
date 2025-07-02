@@ -36,7 +36,7 @@ try:
 except Exception:
     llm = None
 
-from agent.prompt_builder import PromptBuilder
+from agent.core.prompt_builder import PromptBuilder
 
 # ------------------------------------------
 # Query Validator

@@ -11,7 +11,7 @@ from tools.sql_toolkit_factory import (
     get_common_query_tool,
 )
 from .prompt_builder import PromptBuilder
-from agent.dynamic_sql_builder import load_schema, build_dynamic_sql, get_field_alias
+from agent.core.dynamic_sql_builder import load_schema, build_dynamic_sql, get_field_alias
 
 import yaml
 

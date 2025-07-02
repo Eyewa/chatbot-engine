@@ -1,6 +1,6 @@
 import pytest
 from tools.custom_table_info_loader import extract_table_names
-from agent.agent_router import _combine_responses
+from agent.core.agent_router import _combine_responses
 
 
 def test_extract_table_names_simple():

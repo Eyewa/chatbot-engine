@@ -1,4 +1,4 @@
-from agent.prompt_builder import PromptBuilder
+from agent.core.prompt_builder import PromptBuilder
 
 
 def test_custom_table_info_uses_custom_info():

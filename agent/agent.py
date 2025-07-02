@@ -1,6 +1,6 @@
 """Factory for Winkly chatbot agent."""
 
-from agent.agent_router import get_routed_agent
+from agent.core.agent_router import get_routed_agent
 
 def build_chatbot_agent():
     """
