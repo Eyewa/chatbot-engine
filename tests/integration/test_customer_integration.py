@@ -1,13 +1,17 @@
-import requests
 import pytest
+import requests
 
 API_URL = "http://localhost:8000/chat/"
 
+
 @pytest.mark.integration
-@pytest.mark.parametrize("customer_id, expect_orders", [
-    (1338787, True),   # Customer with orders
-    (2555880, False),  # Customer with no orders
-])
+@pytest.mark.parametrize(
+    "customer_id, expect_orders",
+    [
+        (1338787, True),  # Customer with orders
+        (2555880, False),  # Customer with no orders
+    ],
+)
 def test_customer_summary_and_orders(customer_id, expect_orders):
     """
     Integration test requiring a running FastAPI server.
@@ -19,7 +23,7 @@ def test_customer_summary_and_orders(customer_id, expect_orders):
             "input": f"show last two order and their separate order amount and customer name his loyalty card of customer {customer_id}",
             "chat_history": [],
             "summarize": False,
-            "conversationId": None
+            "conversationId": None,
         }
         response = requests.post(API_URL, json=payload, timeout=120)
         assert response.status_code == 200
@@ -30,22 +34,35 @@ def test_customer_summary_and_orders(customer_id, expect_orders):
             (isinstance(item, dict) and item.get("type") == "customer_summary")
             for item in (data if isinstance(data, list) else [data])
         )
-        assert found_customer, f"customer_summary not found in response for customer {customer_id}"
+        assert (
+            found_customer
+        ), f"customer_summary not found in response for customer {customer_id}"
 
         # Always expect orders_summary (even if empty)
         found_orders_summary = any(
             (isinstance(item, dict) and item.get("type") == "orders_summary")
             for item in (data if isinstance(data, list) else [data])
         )
-        assert found_orders_summary, f"orders_summary not found for customer {customer_id}"
+        assert (
+            found_orders_summary
+        ), f"orders_summary not found for customer {customer_id}"
 
         # Check if orders array has actual orders
         orders_summary = next(
-            (item for item in (data if isinstance(data, list) else [data]) 
-             if isinstance(item, dict) and item.get("type") == "orders_summary"), 
-            None
+            (
+                item
+                for item in (data if isinstance(data, list) else [data])
+                if isinstance(item, dict) and item.get("type") == "orders_summary"
+            ),
+            None,
         )
-        has_orders = bool(orders_summary and orders_summary.get("orders") and len(orders_summary.get("orders", [])) > 0)
-        assert has_orders == expect_orders, f"Expected orders: {expect_orders}, got: {has_orders}"
+        has_orders = bool(
+            orders_summary
+            and orders_summary.get("orders")
+            and len(orders_summary.get("orders", [])) > 0
+        )
+        assert (
+            has_orders == expect_orders
+        ), f"Expected orders: {expect_orders}, got: {has_orders}"
     except Exception as e:
-        assert False, f"Integration test failed: {e}" 
+        assert False, f"Integration test failed: {e}"

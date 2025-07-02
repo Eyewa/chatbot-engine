@@ -24,3 +24,6 @@ sqlparse>=0.4.4
 sentence-transformers
 
 langsmith
+
+pytest-cov
+ruff

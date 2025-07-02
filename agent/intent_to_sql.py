@@ -1,12 +1,14 @@
 import logging
-from typing import Dict, Any, List
+from typing import Any, Dict, List
+
 from agent.core.config_loader import config_loader
+
 
 def validate_intent_schema(intent: Dict[str, Any], schema: Dict[str, Any]) -> List[str]:
     logging.debug(f"[validate_intent_schema] Validating intent: {intent}")
     errors = []
-    db = intent.get('db', 'live')
-    schema_tables = schema.get(db, {}).get('tables', {})
+    db = intent.get("db", "live")
+    schema_tables = schema.get(db, {}).get("tables", {})
     # Validate tables
     for table in intent.get("tables", []):
         if table not in schema_tables:
@@ -26,19 +28,23 @@ def validate_intent_schema(intent: Dict[str, Any], schema: Dict[str, Any]) -> Li
         to_table = join["to_table"]
         to_field = join["to_field"]
         if from_table not in schema_tables or to_table not in schema_tables:
-            errors.append(f"Unknown table in join: {from_table} or {to_table} in db: {db}")
+            errors.append(
+                f"Unknown table in join: {from_table} or {to_table} in db: {db}"
+            )
             continue
         found = False
         for j in schema_tables[from_table].get("joins", []):
             if (
-                j["to_table"] == to_table and
-                j["from_field"] == from_field and
-                j["to_field"] == to_field
+                j["to_table"] == to_table
+                and j["from_field"] == from_field
+                and j["to_field"] == to_field
             ):
                 found = True
                 break
         if not found:
-            errors.append(f"Invalid join: {from_table}.{from_field} -> {to_table}.{to_field} in db: {db}")
+            errors.append(
+                f"Invalid join: {from_table}.{from_field} -> {to_table}.{to_field} in db: {db}"
+            )
     # Validate filters
     for k in intent.get("filters", {}).keys():
         if "." in k:
@@ -58,9 +64,12 @@ def validate_intent_schema(intent: Dict[str, Any], schema: Dict[str, Any]) -> Li
         if agg_table not in schema_tables:
             errors.append(f"Unknown table for aggregation: {agg_table}")
         elif agg_field not in schema_tables[agg_table]["fields"]:
-            errors.append(f"Unknown aggregation field: {agg_field} in table: {agg_table}")
+            errors.append(
+                f"Unknown aggregation field: {agg_field} in table: {agg_table}"
+            )
     logging.debug(f"[validate_intent_schema] Validation errors: {errors}")
     return errors
+
 
 def intent_to_sql(intent: Dict[str, Any]) -> str:
     """
@@ -69,12 +78,12 @@ def intent_to_sql(intent: Dict[str, Any]) -> str:
     """
     logging.info(f"[intent_to_sql] Received intent: {intent}")
     schema = config_loader.get_schema()
-    db = intent.get('db', 'live')
+    db = intent.get("db", "live")
     errors = validate_intent_schema(intent, schema)
     if errors:
         logging.error(f"[intent_to_sql] Validation failed: {errors}")
         raise ValueError("; ".join(errors))
-    schema_tables = schema.get(db, {}).get('tables', {})
+    schema_tables = schema.get(db, {}).get("tables", {})
 
     # Validate tables
     for table in intent.get("tables", []):
@@ -103,7 +112,9 @@ def intent_to_sql(intent: Dict[str, Any]) -> str:
         # Validate aggregation field
         agg_table = intent["tables"][0]
         if agg_field not in schema_tables[agg_table]["fields"]:
-            raise ValueError(f"Unknown aggregation field: {agg_field} in table: {agg_table} in db: {db}")
+            raise ValueError(
+                f"Unknown aggregation field: {agg_field} in table: {agg_table} in db: {db}"
+            )
         select_fields = [f"{group_by}", f"{func}({agg_field}) as total"]
         if group_by:
             group_by_clause = f"GROUP BY {group_by}"
@@ -157,4 +168,4 @@ def intent_to_sql(intent: Dict[str, Any]) -> str:
         sql += f" {limit_clause}"
     sql = sql.strip()
     logging.info(f"[intent_to_sql] Generated SQL: {sql}")
-    return sql 
+    return sql

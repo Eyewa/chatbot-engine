@@ -4,10 +4,12 @@ try:
     import yaml  # type: ignore
 except Exception:  # pragma: no cover - fallback when PyYAML isn't installed
     import simple_yaml as yaml
+
 import json
 import logging
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
+
 
 def validate_schema_yaml(path: str) -> Dict[str, Any]:
     """Validates the structure of schema.yaml and returns parsed content."""
@@ -24,29 +26,48 @@ def validate_schema_yaml(path: str) -> Dict[str, Any]:
             data = json.load(jf)
 
     assert isinstance(data, dict), "❌ Top-level YAML structure must be a dictionary"
-    assert any(k in data for k in ("live", "common")), "❌ Missing 'live' or 'common' key in schema"
+    assert any(
+        k in data for k in ("live", "common")
+    ), "❌ Missing 'live' or 'common' key in schema"
     for db_key in ("live", "common"):
         if db_key in data:
             db = data[db_key]
             assert "tables" in db, f"❌ Missing 'tables' key in {db_key}"
-            assert isinstance(db["tables"], dict), f"❌ 'tables' in {db_key} must be a dictionary"
+            assert isinstance(
+                db["tables"], dict
+            ), f"❌ 'tables' in {db_key} must be a dictionary"
             for table, meta in db["tables"].items():
-                assert isinstance(meta, dict), f"❌ Table '{table}' definition in {db_key} must be a dictionary"
-                assert "fields" in meta, f"❌ Missing 'fields' for table: {table} in {db_key}"
-                assert isinstance(meta["fields"], list), f"❌ 'fields' in {table} must be a list"
+                assert isinstance(
+                    meta, dict
+                ), f"❌ Table '{table}' definition in {db_key} must be a dictionary"
+                assert (
+                    "fields" in meta
+                ), f"❌ Missing 'fields' for table: {table} in {db_key}"
+                assert isinstance(
+                    meta["fields"], list
+                ), f"❌ 'fields' in {table} must be a list"
                 for field in meta["fields"]:
-                    assert isinstance(field, str), f"❌ Each field in {table} must be a string"
+                    assert isinstance(
+                        field, str
+                    ), f"❌ Each field in {table} must be a string"
                 if "joins" in meta:
-                    assert isinstance(meta["joins"], list), f"❌ 'joins' in {table} must be a list"
+                    assert isinstance(
+                        meta["joins"], list
+                    ), f"❌ 'joins' in {table} must be a list"
                     for join in meta["joins"]:
-                        assert isinstance(join, dict), f"❌ Each join in {table} must be a dictionary"
-                        assert all(k in join for k in ["from_field", "to_table", "to_field"]), (
-                            f"❌ Each join in {table} must contain 'from_field', 'to_table', and 'to_field'"
-                        )
+                        assert isinstance(
+                            join, dict
+                        ), f"❌ Each join in {table} must be a dictionary"
+                        assert all(
+                            k in join for k in ["from_field", "to_table", "to_field"]
+                        ), f"❌ Each join in {table} must contain 'from_field', 'to_table', and 'to_field'"
                 if "customInfo" in meta:
-                    assert isinstance(meta["customInfo"], str), f"❌ customInfo in {table} must be a string"
+                    assert isinstance(
+                        meta["customInfo"], str
+                    ), f"❌ customInfo in {table} must be a string"
     logging.info("✅ schema.yaml is valid and well-structured!")
     return data
+
 
 def generate_openapi_schema(schema_data: Dict[str, Any]) -> Dict[str, Any]:
     """Generates an OpenAPI-compatible schema from YAML schema."""
@@ -55,14 +76,17 @@ def generate_openapi_schema(schema_data: Dict[str, Any]) -> Dict[str, Any]:
         properties[table] = {
             "type": "object",
             "description": meta.get("description", ""),
-            "properties": {field: {"type": "string"} for field in meta.get("fields", [])}
+            "properties": {
+                field: {"type": "string"} for field in meta.get("fields", [])
+            },
         }
 
     return {
         "openapi": "3.0.0",
         "info": {"title": "Eyewa Schema", "version": "1.0.0"},
-        "components": {"schemas": properties}
+        "components": {"schemas": properties},
     }
+
 
 def generate_custom_table_info(schema_data: Dict[str, Any]) -> Dict[str, str]:
     """Creates LangChain-compatible custom_table_info from YAML schema."""
@@ -73,7 +97,10 @@ def generate_custom_table_info(schema_data: Dict[str, Any]) -> Dict[str, str]:
         table_info[table] = f"{table}: {desc}\nColumns: {fields}"
     return table_info
 
-def generate_prompt_context(schema_data: Dict[str, Any], allowed_tables: Optional[list] = None) -> str:
+
+def generate_prompt_context(
+    schema_data: Dict[str, Any], allowed_tables: Optional[list] = None
+) -> str:
     """Creates a concise join summary for prompting agents."""
     join_lines = []
     for table, meta in schema_data.get("tables", {}).items():
@@ -82,8 +109,11 @@ def generate_prompt_context(schema_data: Dict[str, Any], allowed_tables: Optiona
         for join in meta.get("joins", []):
             if allowed_tables and join.get("to_table") not in allowed_tables:
                 continue
-            join_lines.append(f"{table}.{join['from_field']} → {join['to_table']}.{join['to_field']}")
+            join_lines.append(
+                f"{table}.{join['from_field']} → {join['to_table']}.{join['to_field']}"
+            )
     return "Use these joins when needed:\n" + "\n".join(join_lines)
+
 
 # --------------------------
 # CLI testing utility

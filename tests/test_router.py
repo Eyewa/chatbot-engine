@@ -1,4 +1,3 @@
-import json
 
 import agent.core.agent_router as agent_router
 
@@ -95,7 +94,9 @@ def test_handle_both_augments_query(monkeypatch):
 
     # Input contains both live and common keywords
     router = agent_router.get_routed_agent()
-    router.invoke({"input": "show orders and loyalty card for customer 42", "chat_history": []})
+    router.invoke(
+        {"input": "show orders and loyalty card for customer 42", "chat_history": []}
+    )
 
     assert any("customer 42" in s for s in sent)
 
@@ -122,7 +123,7 @@ def test_combine_responses_filters_and_merges():
 def test_combine_responses_with_loyalty_cards():
     # Test that loyalty card information from loyalty_cards array is properly extracted
     live = '{"type": "orders_summary", "orders": []}'
-    common = '''
+    common = """
     {
         "type": "loyalty_summary",
         "loyalty_cards": [{
@@ -135,23 +136,23 @@ def test_combine_responses_with_loyalty_cards():
             }
         }]
     }
-    '''
+    """
 
     out = agent_router._combine_responses(live, common)
     result = out
     assert result is not None
     assert isinstance(result, list)
-    
+
     # Verify loyalty summary is present and has correct data
     loyalty_summaries = [r for r in result if r.get("type") == "loyalty_summary"]
     assert len(loyalty_summaries) == 1
     loyalty = loyalty_summaries[0]
-    
+
     # Check that the loyalty card information was properly extracted
     assert loyalty["card_number"] == "000764054"
     assert loyalty["status"] == "ACTIVE"
     assert "points_balance" in loyalty  # Should be present but None
-    assert "expiry_date" in loyalty    # Should be present but None
+    assert "expiry_date" in loyalty  # Should be present but None
 
 
 def test_combine_responses_single_agent():
@@ -170,5 +171,5 @@ def test_combine_responses_no_data():
     result = out
     assert result == {
         "type": "text_response",
-        "message": "No data found from either source"
+        "message": "No data found from either source",
     }

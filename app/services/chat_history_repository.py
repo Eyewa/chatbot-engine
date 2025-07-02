@@ -1,11 +1,13 @@
 # Repository for persisting chat history to MySQL
-import os
 import json
+import os
 from typing import Any, Dict, List, Optional
+
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 
 load_dotenv()
+
 
 class ChatHistoryRepository:
     """Simple repository that saves and retrieves chat history."""
@@ -50,11 +52,15 @@ class ChatHistoryRepository:
                     "user_input": user_input,
                     "agent_output": agent_output,
                     "intent": intent,
-                    "debug_info": json.dumps(debug_info) if debug_info is not None else None,
+                    "debug_info": (
+                        json.dumps(debug_info) if debug_info is not None else None
+                    ),
                 },
             )
 
-    def fetch_history(self, conversation_id: str, limit: Optional[int] = None) -> List[str]:
+    def fetch_history(
+        self, conversation_id: str, limit: Optional[int] = None
+    ) -> List[str]:
         """Return chat history as a list alternating user and assistant messages."""
         query = """
             SELECT user_input, agent_output
@@ -77,7 +83,9 @@ class ChatHistoryRepository:
                 history.append(row["agent_output"])
             return history
 
-    def fetch_history_with_token_limit(self, conversation_id: str, max_tokens: int = 8000) -> List[str]:
+    def fetch_history_with_token_limit(
+        self, conversation_id: str, max_tokens: int = 8000
+    ) -> List[str]:
         """Return chat history with token-based limiting to prevent context explosion."""
         query = """
             SELECT user_input, agent_output, id
@@ -86,7 +94,7 @@ class ChatHistoryRepository:
             ORDER BY id DESC
         """
         params = {"conversation_id": conversation_id}
-        
+
         with self.engine.connect() as conn:
             result = conn.execute(
                 text(query),
@@ -96,28 +104,27 @@ class ChatHistoryRepository:
             # Start from most recent and work backwards
             history: List[str] = []
             current_tokens = 0
-            
+
             # Convert to list and reverse to get chronological order
             rows = list(result)
             rows.reverse()
-            
+
             for row in rows:
                 user_input = row["user_input"]
                 agent_output = row["agent_output"]
-                
+
                 # Rough token estimation (4 chars per token is a reasonable approximation)
                 user_tokens = len(user_input) // 4
                 agent_tokens = len(agent_output) // 4
                 total_turn_tokens = user_tokens + agent_tokens
-                
+
                 # If adding this turn would exceed the limit, stop
                 if current_tokens + total_turn_tokens > max_tokens:
                     break
-                
+
                 # Add the turn to history (in chronological order)
                 history.append(user_input)
                 history.append(agent_output)
                 current_tokens += total_turn_tokens
-            
-            return history
 
+            return history

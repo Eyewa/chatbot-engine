@@ -1,18 +1,17 @@
 from __future__ import annotations
-import re
-from typing import Dict, List, Any
-import yaml
-import os
-import logging
+
 import json
+import logging
+import os
+import re
+from typing import Any, Dict, List
+
+import yaml
 from openai import OpenAI
-import typing
 
 try:
-    from langchain_openai import ChatOpenAI
-    from langchain_core.output_parsers import JsonOutputParser
-    from langchain_core.prompts import ChatPromptTemplate
     from langchain_core.runnables import Runnable
+    from langchain_openai import ChatOpenAI
 except Exception:
     ChatOpenAI = None  # type: ignore
     Runnable = None  # type: ignore
@@ -20,9 +19,14 @@ except Exception:
 # Load the schema to provide context to the LLM
 from agent.core.dynamic_sql_builder import load_schema
 
-
 INTENT_HIERARCHY: Dict[str, List[str]] = {
-    "order": ["recent_orders", "order_amount", "order_status", "order_items", "order_date"],
+    "order": [
+        "recent_orders",
+        "order_amount",
+        "order_status",
+        "order_items",
+        "order_date",
+    ],
     "payment": ["amount_paid", "payment_method", "payment_status"],
     "loyalty": ["card_number", "balance", "ledger_history", "expiry"],
     "customer_profile": ["name", "email", "mobile", "id"],
@@ -69,7 +73,7 @@ def _load_schema_for_prompt():
     path = os.path.join("config", "schema", "schema.yaml")
     with open(path) as f:
         schema = yaml.safe_load(f)
-    
+
     # Format for prompt - just tables and fields are enough for the classifier
     prompt_schema = {}
     for db_key, db_schema in schema.items():
@@ -120,23 +124,27 @@ def classify(query: str) -> Dict[str, Any]:
     # that injects the user query and schema into the template.
     # For now, we simulate this by replacing placeholders.
     user_prompt = f"User Query: {query}\n\nSchema:\n{schema_str}"
-    
+
     full_prompt = f"{prompt_template}\n\n{user_prompt}"
 
-    logging.debug(f"[Classifier] Prompt to LLM (JSON enforcement={'returns JSON' in prompt_template or 'JSON output' in prompt_template}):\n{full_prompt}")
+    logging.debug(
+        f"[Classifier] Prompt to LLM (JSON enforcement={'returns JSON' in prompt_template or 'JSON output' in prompt_template}):\n{full_prompt}"
+    )
     messages = [
         {"role": "system", "content": "You are a helpful assistant that returns JSON."},
-        {"role": "user", "content": full_prompt}
+        {"role": "user", "content": full_prompt},
     ]
     # The OpenAI Python SDK expects a list of dicts with 'role' and 'content'.
     # Type checkers may complain, but this is the correct runtime format.
     # type: ignore
-    logging.debug(f"[Classifier] Messages sent to LLM: {json.dumps(messages, indent=2)}")
+    logging.debug(
+        f"[Classifier] Messages sent to LLM: {json.dumps(messages, indent=2)}"
+    )
 
     try:
         metadata = {
             "conversation_id": os.environ.get("CONVERSATION_ID", "test-conv-id"),
-            "message_id": os.environ.get("MESSAGE_ID", "test-msg-id")
+            "message_id": os.environ.get("MESSAGE_ID", "test-msg-id"),
         }
         logging.info(f"Invoking LLM with metadata: {metadata}")
         response = client.chat.completions.create(
@@ -145,7 +153,7 @@ def classify(query: str) -> Dict[str, Any]:
             response_format={"type": "json_object"},
             temperature=0,
             # Add metadata for LangSmith traceability
-            metadata=metadata
+            metadata=metadata,
         )
         llm_output = response.choices[0].message.content
         logging.debug(f"[Classifier] Raw LLM Output: {llm_output}")

@@ -2,6 +2,7 @@
 
 from agent.core.agent_router import get_routed_agent
 
+
 def build_chatbot_agent():
     """
     Return the multi-DB agent with intent routing.

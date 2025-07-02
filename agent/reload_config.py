@@ -1,13 +1,15 @@
 # agent/reload.py
-import os
 import logging
-from typing import Dict, List, Optional, Any
-from fastapi import APIRouter
-from agent.core.prompt_builder import PromptBuilder
-from langchain_community.utilities.sql_database import SQLDatabase
-from langchain_community.agent_toolkits.sql.toolkit import SQLDatabaseToolkit
-from langchain_openai import ChatOpenAI
+import os
+from typing import Any, Dict, List, Optional
+
 import yaml
+from fastapi import APIRouter
+from langchain_community.agent_toolkits.sql.toolkit import SQLDatabaseToolkit
+from langchain_community.utilities.sql_database import SQLDatabase
+from langchain_openai import ChatOpenAI
+
+from agent.core.prompt_builder import PromptBuilder
 
 router = APIRouter()
 
@@ -39,16 +41,19 @@ def reload_response_types():
     try:
         # Load response types directly from config
         response_types = safe_load("config/templates/response_types.yaml")
-        
+
         logging.info("✅ Response types reloaded via /admin/reload-response-types")
-        return {"status": "✅ Response types reloaded", "types": list(response_types.keys())}
+        return {
+            "status": "✅ Response types reloaded",
+            "types": list(response_types.keys()),
+        }
     except Exception as e:
         logging.error(f"❌ Failed to reload response types: {e}")
         return {"status": "❌ Failed to reload response types", "error": str(e)}
 
 
 def safe_load(file_path):
-    with open(file_path, 'r', encoding='utf-8') as f:
+    with open(file_path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 
@@ -70,9 +75,9 @@ def rebuild_sql_tools(db_type: str):
         # Load allowed tables from schema
         schema_path = os.path.join("config", "schema", "schema.yaml")
         try:
-            with open(schema_path, 'r') as f:
+            with open(schema_path, "r") as f:
                 schema = yaml.safe_load(f)
-            allowed = list(schema.get('live', {}).get('tables', {}).keys())
+            allowed = list(schema.get("live", {}).get("tables", {}).keys())
         except Exception as e:
             logging.error(f"Could not load schema config: {e}")
             allowed = []
@@ -81,9 +86,9 @@ def rebuild_sql_tools(db_type: str):
         # Load allowed tables from schema
         schema_path = os.path.join("config", "schema", "schema.yaml")
         try:
-            with open(schema_path, 'r') as f:
+            with open(schema_path, "r") as f:
                 schema = yaml.safe_load(f)
-            allowed = list(schema.get('common', {}).get('tables', {}).keys())
+            allowed = list(schema.get("common", {}).get("tables", {}).keys())
         except Exception as e:
             logging.error(f"Could not load schema config: {e}")
             allowed = []

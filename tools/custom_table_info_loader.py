@@ -1,9 +1,10 @@
 """Utilities for generating LangChain custom_table_info strings."""
 
-from pathlib import Path
-from typing import List
 import json
 import re
+from pathlib import Path
+from typing import List
+
 import yaml
 
 try:
@@ -12,7 +13,9 @@ except Exception:  # pragma: no cover - fallback when PyYAML isn't installed
     import simple_yaml as yaml
 
 
-def load_custom_table_info(schema_path: str, table_names: List[str], db: str = 'live') -> str:
+def load_custom_table_info(
+    schema_path: str, table_names: List[str], db: str = "live"
+) -> str:
     """Load schema.yaml and build a custom_table_info string for selected tables."""
     path = Path(schema_path)
     if not path.exists():
@@ -51,6 +54,7 @@ def load_custom_table_info(schema_path: str, table_names: List[str], db: str = '
 
     return "\n".join(lines).strip()
 
+
 def extract_table_names(sql: str):
     # Very basic: finds all table names after FROM or JOIN
-    return re.findall(r'(?:from|join)\s+([\w_]+)', sql, re.IGNORECASE)
+    return re.findall(r"(?:from|join)\s+([\w_]+)", sql, re.IGNORECASE)

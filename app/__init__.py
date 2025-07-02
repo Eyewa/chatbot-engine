@@ -11,4 +11,4 @@ A production-ready, modular chatbot API with:
 
 __version__ = "1.0.0"
 __author__ = "Chatbot Engine Team"
-__description__ = "A sophisticated, multi-agent chatbot with dynamic data routing and token monitoring" 
+__description__ = "A sophisticated, multi-agent chatbot with dynamic data routing and token monitoring"

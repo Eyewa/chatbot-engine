@@ -1,9 +1,11 @@
+import ast
 import json
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-import ast
+
 import yaml
+
 
 class PromptBuilder:
     """Load prompt configuration from YAML files with hot-reload support."""
@@ -11,15 +13,17 @@ class PromptBuilder:
     _cache: Dict[str, Dict[str, Any]] = {}
     _timestamps: Dict[str, float] = {}
 
-    def __init__(self, base_dir: str = "config"):
+    def __init__(self, base_dir: str = "config") -> None:
+        """Initialize PromptBuilder with base directory for config files."""
         self.base_dir = Path(base_dir)
-        self.response_cfg = self._load_yaml(
+        self.response_cfg: Dict[str, Any] = self._load_yaml(
             self.base_dir / "templates" / "response_types.yaml"
         )
-        self.schema_cfg = self._load_yaml(self.base_dir / "schema" / "schema.yaml")
+        self.schema_cfg: Dict[str, Any] = self._load_yaml(self.base_dir / "schema" / "schema.yaml")
 
     @classmethod
     def _load_yaml(cls, path: Path) -> Dict[str, Any]:
+        """Load YAML or JSON config file with caching and hot-reload support."""
         key = str(path.resolve())
         try:
             mtime = path.stat().st_mtime
@@ -39,7 +43,7 @@ class PromptBuilder:
             return {}
 
     def _map_db_key(self, db: str) -> str:
-        # Map external db names to schema keys
+        """Map external db names to schema keys."""
         if db == "eyewa_live":
             return "live"
         if db == "eyewa_common":
@@ -47,10 +51,14 @@ class PromptBuilder:
         return db
 
     def build_system_prompt(
-        self, db: str = "live", allowed_tables: Optional[List[str]] = None, extra_examples: Optional[list] = None
+        self,
+        db: str = "live",
+        allowed_tables: Optional[List[str]] = None,
+        extra_examples: Optional[list] = None,
     ) -> str:
+        """Build a system prompt for the agent based on allowed tables and schema."""
         types = ", ".join(self.response_cfg.keys())
-        lines = [
+        lines: List[str] = [
             "You are a structured data assistant. Use only the schema and rules below.",
             "Instructions:",
             "- Use only the listed tables and fields. Do not invent or guess.",
@@ -60,10 +68,11 @@ class PromptBuilder:
             f"- Top-level key must be 'type', matching one of: {types}.",
         ]
         if allowed_tables:
-            lines.append(f"Database: `{db}`. Allowed tables: {', '.join(allowed_tables)}.")
-            table_info = []
-            schema_db_key = self._map_db_key(db)
-            db_tables = self.schema_cfg.get(schema_db_key, {}).get("tables", {})
+            lines.append(
+                f"Database: `{db}`. Allowed tables: {', '.join(allowed_tables)}."
+            )
+            table_info: List[str] = []
+            db_tables = self.schema_cfg.get(self._map_db_key(db), {}).get("tables", {})
             for table in allowed_tables:
                 meta = db_tables.get(table, {})
                 fields = meta.get("fields", [])
@@ -73,7 +82,9 @@ class PromptBuilder:
                 desc = meta.get("description")
                 custom = meta.get("customInfo")
                 if business_ctx:
-                    ctx_lines = [l.strip() for l in business_ctx.splitlines() if l.strip()]
+                    ctx_lines = [
+                        line.strip() for line in business_ctx.splitlines() if line.strip()
+                    ]
                     table_line += "\n  " + "\n  ".join(ctx_lines)
                 elif custom:
                     table_line += f"\n  (Note: {custom})"
@@ -90,7 +101,7 @@ class PromptBuilder:
             if table_info:
                 lines.append("ALLOWED TABLES AND FIELDS:")
                 lines.extend(table_info)
-            field_to_table = {}
+            field_to_table: Dict[str, List[str]] = {}
             for table in allowed_tables:
                 meta = db_tables.get(table, {})
                 for field in meta.get("fields", []):
@@ -102,29 +113,31 @@ class PromptBuilder:
         if extra_examples and len(extra_examples) > 0:
             lines.append("Example join:")
             lines.append(extra_examples[0])
-        join_lines = []
-        schema_db_key = self._map_db_key(db)
-        db_tables = self.schema_cfg.get(schema_db_key, {}).get("tables", {})
+        join_lines: List[str] = []
         for table, meta in db_tables.items():
             if allowed_tables and table not in allowed_tables:
                 continue
             for join in meta.get("joins", []):
                 if join.get("to_table") in allowed_tables:
-                    join_lines.append(f"{table}.{join['from_field']} → {join['to_table']}.{join['to_field']}")
+                    join_lines.append(
+                        f"{table}.{join['from_field']} → {join['to_table']}.{join['to_field']}"
+                    )
         if join_lines:
             lines.append("Known joins:")
             lines.extend(join_lines)
         prompt = "\n".join(lines)
-        logging.info(f"[PromptBuilder] Built system prompt for db={db}, allowed_tables={allowed_tables}")
+        logging.info(
+            f"[PromptBuilder] Built system prompt for db={db}, allowed_tables={allowed_tables}"
+        )
         logging.debug(f"[PromptBuilder] System prompt:\n{prompt}")
         return prompt
 
     def build_custom_table_info(
-        self, allowed_tables: Optional[List[str]] = None, db: str = 'live'
+        self, allowed_tables: Optional[List[str]] = None, db: str = "live"
     ) -> Dict[str, str]:
-        info = {}
-        schema_db_key = self._map_db_key(db)
-        db_tables = self.schema_cfg.get(schema_db_key, {}).get("tables", {})
+        """Build custom table info for allowed tables in a given db."""
+        info: Dict[str, str] = {}
+        db_tables = self.schema_cfg.get(self._map_db_key(db), {}).get("tables", {})
         for table, meta in db_tables.items():
             if allowed_tables and table not in allowed_tables:
                 continue
@@ -138,7 +151,8 @@ class PromptBuilder:
             field_list = ", ".join(fields)
             joins = meta.get("joins", [])
             join_info = "; ".join(
-                f"{table}.{j['from_field']} -> {j['to_table']}.{j['to_field']}" for j in joins
+                f"{table}.{j['from_field']} -> {j['to_table']}.{j['to_field']}"
+                for j in joins
             )
             text = f"{table}: {description}\nColumns: {field_list}"
             if join_info:
@@ -147,6 +161,7 @@ class PromptBuilder:
         return info
 
     def translate_freeform(self, text: str) -> Dict[str, Any]:
+        """Attempt to parse a freeform response as JSON or Python dict."""
         logging.debug(f"📦 Attempting to parse response: {text!r}")
 
         # Try JSON directly
@@ -174,7 +189,8 @@ class PromptBuilder:
 
         return {"type": "text_response", "message": text.strip()}
 
-    def assert_valid_schema(self):
+    def assert_valid_schema(self) -> None:
+        """Assert that the loaded schema config is valid."""
         assert isinstance(self.schema_cfg, dict), "Schema must be a dictionary"
         for table, meta in self.schema_cfg.get("tables", {}).items():
             assert "fields" in meta, f"Missing fields for table {table}"
@@ -192,26 +208,28 @@ class PromptBuilder:
                         and "to_field" in join
                     ), f"Invalid join format in {table}"
 
-    def get_table_meta(self, table: str, db: str = 'live') -> dict:
-        schema_db_key = self._map_db_key(db)
-        return self.schema_cfg.get(schema_db_key, {}).get('tables', {}).get(table, {})
+    def get_table_meta(self, table: str, db: str = "live") -> dict:
+        """Get metadata for a specific table in a given database."""
+        db_tables = self.schema_cfg.get(self._map_db_key(db), {}).get("tables", {})
+        return db_tables.get(table, {})
 
-    def build_mini_schema(self, tables: List[str], db: str = 'live') -> dict:
-        mini = {'tables': {}}
-        schema_db_key = self._map_db_key(db)
+    def build_mini_schema(self, tables: List[str], db: str = "live") -> dict:
+        """Build a mini schema dictionary for a subset of tables in a given db."""
+        mini = {"tables": {}}
         for table in tables:
             table_meta = self.get_table_meta(table, db)
             if table_meta:
-                mini['tables'][table] = {
-                    'fields': table_meta.get('fields', []),
-                    'joins': table_meta.get('joins', []),
-                    'description': table_meta.get('description', '')
+                mini["tables"][table] = {
+                    "fields": table_meta.get("fields", []),
+                    "joins": table_meta.get("joins", []),
+                    "description": table_meta.get("description", ""),
                 }
         return mini
 
     def build_system_prompt_with_mini_schema(
         self, db: str, relevant_tables: list, extra_examples: Optional[list] = None
     ) -> str:
+        """Build a system prompt using a mini schema for only relevant tables."""
         mini_schema = self.build_mini_schema(relevant_tables)
         lines = [
             "You are a structured data assistant. Use only the schema and rules below.",
@@ -227,7 +245,9 @@ class PromptBuilder:
         join_lines = []
         for table, meta in mini_schema["tables"].items():
             for join in meta.get("joins", []):
-                join_lines.append(f"{table}.{join['from_field']} → {join['to_table']}.{join['to_field']}")
+                join_lines.append(
+                    f"{table}.{join['from_field']} → {join['to_table']}.{join['to_field']}"
+                )
         if join_lines:
             lines.append("Known joins:")
             lines.extend(join_lines)
@@ -235,6 +255,8 @@ class PromptBuilder:
             lines.append("Example join:")
             lines.append(extra_examples[0])
         prompt = "\n".join(lines)
-        logging.info(f"[PromptBuilder] Built mini-schema prompt for db={db}, relevant_tables={relevant_tables}")
+        logging.info(
+            f"[PromptBuilder] Built mini-schema prompt for db={db}, relevant_tables={relevant_tables}"
+        )
         logging.debug(f"[PromptBuilder] Mini-schema prompt:\n{prompt}")
         return prompt
