@@ -17,7 +17,6 @@ from sqlalchemy import text
 
 from agent.agent import build_chatbot_agent
 from agent.chat_logger import get_chat_logger
-from agent.token_tracker import get_token_tracker
 from agent.utils import generate_llm_message
 from ..core.config import get_settings
 from ..utils.response_formatter import (
@@ -37,7 +36,6 @@ class ChatService:
         self._agent = None
         self._llm = None
         self._chat_logger = get_chat_logger()
-        self._token_tracker = get_token_tracker()
     
     @property
     def agent(self):

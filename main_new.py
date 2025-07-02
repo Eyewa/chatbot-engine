@@ -16,8 +16,7 @@ from langsmith import trace
 from app.core.config import get_settings
 from app.core.logging import setup_logging, get_logger
 from app.api.middleware.error_handler import register_exception_handlers
-from app.api.routes import chat_router, monitoring_router, admin_router
-from app.services.monitoring_service import MonitoringService
+from app.api.routes import chat_router, admin_router
 
 # LangSmith integration: set environment variables if not already set
 if not os.environ.get("LANGCHAIN_API_KEY"):
@@ -41,34 +40,10 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("🚀 Starting Chatbot Engine...")
     
-    # Initialize monitoring service
-    monitoring_service = MonitoringService()
-    
-    # Start token monitoring if enabled
-    if monitoring_service.settings.monitoring.enabled and monitoring_service.monitoring_available:
-        try:
-            result = monitoring_service.start_monitoring()
-            if "error" not in result:
-                logger.info("🔍 Token monitoring started automatically")
-            else:
-                logger.warning(f"⚠️ Failed to start token monitoring: {result.get('error')}")
-        except Exception as e:
-            logger.error(f"Failed to start token monitoring: {e}")
-    else:
-        logger.warning("⚠️ Token monitoring not available or disabled")
-    
     yield
     
     # Shutdown
     logger.info("🛑 Shutting down Chatbot Engine...")
-    
-    # Stop token monitoring
-    if monitoring_service.monitoring_available and monitoring_service.monitoring_active:
-        try:
-            monitoring_service.stop_monitoring()
-            logger.info("🔍 Token monitoring stopped")
-        except Exception as e:
-            logger.error(f"Failed to stop token monitoring: {e}")
 
 
 def create_app() -> FastAPI:
@@ -102,7 +77,6 @@ def create_app() -> FastAPI:
     
     # Include routers
     app.include_router(chat_router)
-    app.include_router(monitoring_router)
     app.include_router(admin_router)
     
     # Include logging dashboard router
@@ -188,8 +162,6 @@ def main():
     logger.info(f"🟢 Starting {settings.app_name} v{settings.version}")
     logger.info(f"📍 Server: {settings.host}:{settings.port}")
     logger.info(f"🔧 Debug mode: {settings.debug}")
-    logger.info(f"🔍 Monitoring enabled: {settings.monitoring.enabled}")
-    logger.info(f"💬 Chat history enabled: {settings.chat.include_chat_history}")
     
     # Import uvicorn here to avoid import issues
     import uvicorn

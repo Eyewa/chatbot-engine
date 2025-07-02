@@ -77,13 +77,6 @@ def generate_llm_message(output, llm, schema=None, response_type=None):
             {"role": "system", "content": "You are a helpful assistant."},
             {"role": "user", "content": prompt}
         ], metadata=metadata)
-        # Token tracking
-        try:
-            from token_tracker import track_llm_call
-            message = str(resp.content) if hasattr(resp, "content") else str(resp)
-            track_llm_call(prompt, message)
-        except Exception as e:
-            logging.warning(f"[TokenTracker] Could not track tokens: {e}")
         message = str(resp.content) if hasattr(resp, "content") else str(resp)
         # Try to parse as JSON
         try:

@@ -151,12 +151,6 @@ def classify(query: str) -> Dict[str, Any]:
         logging.debug(f"[Classifier] Raw LLM Output: {llm_output}")
         if not llm_output:
             raise ValueError("LLM returned an empty response.")
-        # Token tracking
-        try:
-            from token_tracker import track_llm_call
-            track_llm_call(json.dumps(messages), llm_output)
-        except Exception as e:
-            logging.warning(f"[TokenTracker] Could not track tokens: {e}")
         return json.loads(llm_output)
     except Exception as e:
         logging.error(f"[Classifier] Error during LLM call: {e}", exc_info=True)
