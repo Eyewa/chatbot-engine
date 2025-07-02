@@ -64,5 +64,19 @@ def test_customer_summary_and_orders(customer_id, expect_orders):
         assert (
             has_orders == expect_orders
         ), f"Expected orders: {expect_orders}, got: {has_orders}"
+
+        # Check for loyalty_summary and assert card_number if present
+        loyalty_summary = next(
+            (
+                item
+                for item in (data if isinstance(data, list) else [data])
+                if isinstance(item, dict) and item.get("type") == "loyalty_summary"
+            ),
+            None,
+        )
+        if loyalty_summary:
+            assert "card_number" in loyalty_summary, f"card_number missing in loyalty_summary for customer {customer_id}"
+            # Optionally, check for a non-null card_number if you expect it for some customers
+            # assert loyalty_summary["card_number"] is not None, f"card_number is None in loyalty_summary for customer {customer_id}"
     except Exception as e:
         assert False, f"Integration test failed: {e}"
